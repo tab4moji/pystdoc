@@ -55,9 +55,13 @@ class LLMClient:
         self.ensure_reachable()
 
     def ensure_reachable(self) -> bool:
-        """Check and discover reachable endpoint, including WSL2 host gateway."""
+        """Check and discover reachable endpoint, keeping user-specified host intact."""
         if self._ping_url(self.base_url):
             return True
+
+        # If the user explicitly passed a host/base_url, never overwrite it with default WSL fallback
+        if self.user_specified_host:
+            return False
 
         wsl_host = self._detect_wsl_host()
         if wsl_host:
@@ -69,15 +73,27 @@ class LLMClient:
         return False
 
     def _ping_url(self, url: str) -> bool:
-        """Check if an endpoint is reachable."""
-        try:
-            req = urllib.request.Request(f"{url}/models", method="GET")
-            if self.token:
-                req.add_header("Authorization", f"Bearer {self.token}")
-            with urllib.request.urlopen(req, timeout=1.5) as res:
-                return res.status in (200, 204, 401)
-        except Exception:
-            return False
+        """Check if an endpoint is reachable via multiple candidate health endpoints."""
+        candidates = [
+            f"{url}/models",
+            url,
+            url.rsplit("/v1", 1)[0] if url.endswith("/v1") else url,
+            f"{url.rsplit('/v1', 1)[0]}/api/tags" if url.endswith("/v1") else f"{url}/api/tags",
+        ]
+        for target in candidates:
+            try:
+                req = urllib.request.Request(target, method="GET")
+                if self.token:
+                    req.add_header("Authorization", f"Bearer {self.token}")
+                with urllib.request.urlopen(req, timeout=1.5) as res:
+                    if res.status in (200, 204, 401):
+                        return True
+            except urllib.error.HTTPError as he:
+                if he.code in (200, 204, 401, 403):
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _detect_wsl_host(self) -> Optional[str]:
         """Detect WSL default gateway host IP via ip route or resolv.conf."""
@@ -129,13 +145,27 @@ class LLMClient:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
                     return res_data["choices"][0]["message"]["content"]
+            except urllib.error.HTTPError as he:
+                err_body = ""
+                try:
+                    err_body = he.read().decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                detail = f": {err_body}" if err_body else ""
+                last_error = f"HTTP Error {he.code}: {he.reason}{detail}"
+                # If 404 (e.g. model not found), don't retry in vain
+                if he.code == 404:
+                    break
+                if attempt < max_retries:
+                    time.sleep(1.5 * attempt)
+                    continue
             except Exception as e:
-                last_error = e
+                last_error = str(e)
                 if attempt < max_retries:
                     time.sleep(1.5 * attempt)
                     continue
 
-        raise LLMError(f"LLM API call failed ({url}, model={self.model}): {last_error}") from last_error
+        raise LLMError(f"LLM API call failed ({url}, model={self.model}): {last_error}")
 
     def explain_symbol(
         self,

@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import pystdoc
 from pystdoc.engine import run_docgen
 from pystdoc.design_engine import run_design_generation
 from pystdoc.report_engine import generate_readme_doc
@@ -12,6 +13,7 @@ from pystdoc.report_engine import generate_readme_doc
 def docgen_main() -> None:
     """CLI entry point for `docgen` command."""
     parser = argparse.ArgumentParser(description="Source code symbol document generator (docgen)")
+    parser.add_argument("--version", "-v", action="version", version=f"%(prog)s {pystdoc.__version__}")
     parser.add_argument("--dir", default="./", help="Target project directory path (default: ./)")
     parser.add_argument("--no-llm", action="store_true", help="Disable LLM explanation generation")
     parser.add_argument("--host", "-H", default=None, help="LLM server host URL (default: http://127.0.0.1:11434)")
@@ -49,6 +51,7 @@ def docgen_main() -> None:
 def designgen_main() -> None:
     """CLI entry point for `designgen` command."""
     parser = argparse.ArgumentParser(description="Architecture and system design generator (designgen)")
+    parser.add_argument("--version", "-v", action="version", version=f"%(prog)s {pystdoc.__version__}")
     parser.add_argument("--dir", default="./", help="Target project directory path (default: ./)")
     parser.add_argument("--no-llm", action="store_true", help="Disable LLM explanation generation")
     parser.add_argument("--host", "-H", default=None, help="LLM server host URL (default: http://127.0.0.1:11434)")
@@ -80,8 +83,9 @@ def designgen_main() -> None:
 
 
 def reportgen_main() -> None:
-    """CLI entry point for `reportgen` command."""
-    parser = argparse.ArgumentParser(description="Unified documentation orchestrator (reportgen)")
+    """CLI entry point for `reportgen` and `pystdoc` commands."""
+    parser = argparse.ArgumentParser(description="Unified documentation orchestrator (reportgen / pystdoc)")
+    parser.add_argument("--version", "-v", action="version", version=f"%(prog)s {pystdoc.__version__}")
     parser.add_argument("--dir", default="./", help="Target project directory path (default: ./)")
     parser.add_argument("--no-llm", action="store_true", help="Disable LLM explanation generation")
     parser.add_argument("--host", "-H", default=None, help="LLM server host URL (default: http://127.0.0.1:11434)")
@@ -106,7 +110,7 @@ def reportgen_main() -> None:
         sys.exit(1)
 
     print("================================================================")
-    print(f"=== reportgen Unified Pipeline (Lang: {args.language}): {target_dir} ===")
+    print(f"=== pystdoc Unified Pipeline v{pystdoc.__version__} (Lang: {args.language}): {target_dir} ===")
     print("================================================================")
 
     # 1. docgen
