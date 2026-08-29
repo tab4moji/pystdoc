@@ -6,6 +6,37 @@ It analyzes codebases in **bottom-up + top-down topological passes**, constructs
 
 ---
 
+## 📁 Output Directory: `.docgen/`
+
+> [!IMPORTANT]
+> **All generated documentation, architecture designs, and caches are automatically centralized inside the `.docgen/` directory of your target project.**
+> Your existing source code files are never modified.
+
+When `pystdoc` finishes, you can explore the complete documentation suite starting from `.docgen/README.md`:
+
+```text
+your_project/
+├── .docgen/                          # <-- Centralized output directory
+│   ├── README.md                     # Executive summary: "What does this project actually do?"
+│   ├── design/                       # System architecture and design documentation
+│   │   ├── overview.md               # Architecture overview & inter-module Mermaid diagram
+│   │   ├── data_models.md            # Data structure design, models, lifecycle & integrity
+│   │   ├── execution_model.md        # Runtime execution model, paradigms, & control flow
+│   │   └── modules/                  # Module-by-module detailed design documents
+│   │       ├── module_a.md
+│   │       └── ...
+│   ├── documents/                    # Granular symbol & source code documentation
+│   │   ├── src/main.c.md             # File-level overview and symbol list
+│   │   ├── src/main.c.fn.main.md     # Individual symbol document (with call graph & context)
+│   │   └── ...
+│   ├── files.txt                     # List of scanned source files
+│   └── index.db                      # SQLite WAL database for instantaneous incremental caching
+├── src/
+└── ...
+```
+
+---
+
 ## 🌟 Key Features
 
 1. **Topological & Structural Ordering (Tarjan SCC + Kahn DAG)**:
@@ -13,8 +44,8 @@ It analyzes codebases in **bottom-up + top-down topological passes**, constructs
    - Automatically breaks cyclic mutual recursions and organizes code symbols into dependency-safe execution levels.
    - Level-by-level parallel LLM execution guarantees context-rich bottom-up summaries without race conditions.
 2. **3-in-1 Unified Documentation Pipeline**:
-   - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching.
-   - `designgen`: Map-Reduce architectural synthesis (`data_models.md`, `execution_model.md`, `modules/*.md`, `overview.md`).
+   - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.docgen/documents/`).
+   - `designgen`: Map-Reduce architectural synthesis (`.docgen/design/`).
    - `reportgen` / `pystdoc`: Executive summary README (`.docgen/README.md`) answering *"What does this project actually do?"*
 3. **C/C++, Python & Shell Deep Understanding**:
    - **`compile_commands.json` Integration**: Full include path resolution and macro expansion via `libclang`.
@@ -38,6 +69,7 @@ pip install pystdoc
 ```bash
 pystdoc --dir ./my_project/
 ```
+*Output will be created at `./my_project/.docgen/README.md`.*
 
 #### 2. Generate in Japanese
 ```bash
@@ -46,10 +78,10 @@ pystdoc --dir ./my_project/ --language 日本語
 
 #### 3. Run Individual Steps
 ```bash
-# Generate symbol-level docs
+# Generate symbol-level docs into .docgen/documents/
 docgen --dir ./my_project/ -j 4
 
-# Synthesize architecture design docs
+# Synthesize architecture design docs into .docgen/design/
 designgen --dir ./my_project/
 ```
 
