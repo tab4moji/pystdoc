@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pystdoc"
+version = "0.1.0"
+description = "Python Structural & Topological Documentation Engine (pystdoc): High-precision, LLM-powered hierarchical codebase and architecture documentation generator."
+readme = "README.md"
+authors = [
+    { name = "tab4moji" }
+]
+license = { text = "MIT" }
+keywords = ["documentation", "llm", "ast", "clang", "architecture", "topological", "dag", "pystdoc", "mermaid"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "libclang>=16.0.0",
+]
+
+[project.scripts]
+pystdoc = "pystdoc.cli:reportgen_main"
+reportgen = "pystdoc.cli:reportgen_main"
+docgen = "pystdoc.cli:docgen_main"
+designgen = "pystdoc.cli:designgen_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

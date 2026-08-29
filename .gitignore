@@ -1,0 +1,14 @@
+# ==========================================
+# Bytecode & Egg Info
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
