@@ -15,6 +15,7 @@ from pystdoc.parser_clang import parse_clang_file
 from pystdoc.doc_writer import (
     write_symbol_doc,
     write_individual_symbol_docs,
+    format_symbol_section,
 )
 from pystdoc.design_engine import run_design_generation
 from pystdoc.report_engine import generate_readme_doc
@@ -23,6 +24,7 @@ from pystdoc.call_graph import (
     link_variables_to_functions,
     build_callee_context_summary,
 )
+from pystdoc.hasher import update_hash_record
 from pystdoc.llm_client import LLMError
 
 
@@ -346,6 +348,125 @@ class TestCoverageBoost(unittest.TestCase):
         )
         doc_custom = generate_static_symbol_doc(sym_custom, "English")
         self.assertIn("CustomSym", doc_custom["purpose"])
+
+    def test_doc_writer_globals_formatting(self):
+        dummy_file = self.src_dir / "globals.c"
+        dummy_file.write_text("int g_a = 1;\n", encoding="utf-8")
+        sym = Symbol(
+            name="fn_with_globals",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            signature="void fn_with_globals()",
+            purpose="Uses globals",
+            callees=["calc_helper"],
+            inputs_note="Custom inputs",
+            outputs_note="Custom outputs",
+        )
+        sec_en = format_symbol_section(
+            sym, dummy_file, level=1, language="English"
+        )
+        self.assertIn("calc_helper", sec_en)
+        self.assertIn("Custom inputs", sec_en)
+        self.assertIn("Custom outputs", sec_en)
+
+        sec_ja = format_symbol_section(
+            sym, dummy_file, level=1, language="Japanese"
+        )
+        self.assertIn("calc_helper", sec_ja)
+        self.assertIn("Custom inputs", sec_ja)
+
+    def test_compilation_db_command_string_and_name_lookup(self):
+        build_dir = self.test_dir / "build"
+        build_dir.mkdir(parents=True, exist_ok=True)
+        comp_json = build_dir / "compile_commands.json"
+        data = [
+            {
+                "directory": str(self.test_dir),
+                "command": "gcc -Iinclude/app -c src/tool.c -o build/tool.o",
+                "file": "src/tool.c",
+            }
+        ]
+        comp_json.write_text(json.dumps(data), encoding="utf-8")
+
+        cdb = CompilationDatabase(db_path=comp_json, target_dir=self.test_dir)
+        # Search by file path name fallback
+        flags = cdb.get_flags_for_file(Path("/outside/project/tool.c"))
+        self.assertTrue(any("-I" in f for f in flags))
+
+    def test_hasher_exception_paths(self):
+        # Create existing hash file
+        hash_f = self.test_dir / ".docgen" / "documents" / "bad.c.hash"
+        hash_f.parent.mkdir(parents=True, exist_ok=True)
+        hash_f.write_text("old_hash", encoding="utf-8")
+
+        with patch.object(
+            Path, "read_text", side_effect=Exception("Disk read error")
+        ):
+            ch, _ = update_hash_record(self.test_dir, Path("bad.c"), "dummy")
+            self.assertTrue(ch)
+
+            from pystdoc.hasher import update_symbol_hash_record
+            sym = Symbol(
+                name="dummy_var", kind="variable", line_start=1, line_end=1
+            )
+            ch_s, _ = update_symbol_hash_record(
+                self.test_dir, Path("bad.c"), sym, "dummy_hash"
+            )
+            self.assertTrue(ch_s)
+
+    def test_doc_writer_extract_symbols_all_languages(self):
+        from pystdoc.doc_writer import extract_symbols
+        c_f = self.src_dir / "t.c"
+        c_f.write_text("int f() { return 0; }\n", encoding="utf-8")
+        self.assertTrue(len(extract_symbols(c_f)) >= 1)
+
+        py_f = self.src_dir / "t.py"
+        py_f.write_text("def f(): pass\n", encoding="utf-8")
+        self.assertTrue(len(extract_symbols(py_f)) >= 1)
+
+        sh_f = self.src_dir / "t.sh"
+        sh_f.write_text("f() { echo 1; }\n", encoding="utf-8")
+        self.assertTrue(len(extract_symbols(sh_f)) >= 1)
+
+        unknown_f = self.src_dir / "t.unknown"
+        unknown_f.write_text("nothing\n", encoding="utf-8")
+        self.assertEqual(extract_symbols(unknown_f), [])
+
+    def test_compilation_db_dash_o_flag_skip(self):
+        build_dir = self.test_dir / "build"
+        build_dir.mkdir(parents=True, exist_ok=True)
+        comp_json = build_dir / "compile_commands.json"
+        data = [
+            {
+                "directory": str(self.test_dir),
+                "command": "gcc -I/usr/include -ooutput.o -c src/tool2.c",
+                "file": "src/tool2.c",
+            }
+        ]
+        comp_json.write_text(json.dumps(data), encoding="utf-8")
+        cdb = CompilationDatabase(db_path=comp_json, target_dir=self.test_dir)
+        flags = cdb.get_flags_for_file(self.src_dir / "tool2.c")
+        self.assertFalse(any(f == "-ooutput.o" for f in flags))
+
+    def test_design_generation_pipeline_strict_error(self):
+        mock_client = MagicMock()
+        mock_client.chat_completion.side_effect = LLMError("Design error")
+        dummy_md = self.test_dir / ".docgen" / "documents" / "sample.c.md"
+        dummy_md.parent.mkdir(parents=True, exist_ok=True)
+        dummy_md.write_text(
+            "# doc\n- **Symbol Kind**: function\n", encoding="utf-8"
+        )
+
+        with patch(
+            "pystdoc.design_engine.LLMClient", return_value=mock_client
+        ):
+            with self.assertRaises(LLMError):
+                run_design_generation(
+                    target_dir=self.test_dir,
+                    use_llm=True,
+                    allow_fallback=False,
+                )
 
 
 if __name__ == "__main__":

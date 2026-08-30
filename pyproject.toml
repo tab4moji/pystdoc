@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pystdoc"
-version = "0.5.3"
+version = "0.5.4"
 description = "Python Structural & Topological Documentation Engine (pystdoc): High-precision, LLM-powered hierarchical codebase and architecture documentation generator."
 readme = "README.md"
 authors = [
@@ -37,3 +37,9 @@ designgen = "pystdoc.cli:designgen_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::ResourceWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]

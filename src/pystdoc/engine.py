@@ -45,6 +45,8 @@ class FileLock:
         try:
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            self.fd.close()
+            self.fd = None
             print(
                 f"Error: Another docgen process is currently processing "
                 f"this directory: {self.lock_file}",
@@ -57,10 +59,13 @@ class FileLock:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.fd:
             try:
-                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            finally:
                 self.fd.close()
-            except Exception:
-                pass
+                self.fd = None
 
 
 def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:

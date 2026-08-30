@@ -277,4 +277,17 @@ class DocgenDB:
         """Close SQLite connection."""
         with self.lock:
             if self.conn:
-                self.conn.close()
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = None
+
+    def __enter__(self) -> "DocgenDB":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
