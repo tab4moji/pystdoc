@@ -1,7 +1,5 @@
-"""Markdown documentation generator for individual symbols and files with top-down/bottom-up layout and multi-language support."""
+"""Markdown doc generator for symbols with layout & language support."""
 
-import os
-import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,7 +12,7 @@ from pystdoc.symbols import Symbol, get_kind_prefix
 
 
 def normalize_language(lang: Optional[str]) -> str:
-    """Normalize language string into standard representation (e.g. 'Japanese', 'English')."""
+    """Normalize language string into standard representation."""
     if not lang:
         return "English"
     l_lower = lang.strip().lower()
@@ -46,9 +44,11 @@ def get_code_language(extension: str) -> str:
 
 
 def get_code_snippet(file_path: Path, line_start: int, line_end: int) -> str:
-    """Extract code lines between line_start and line_end (1-based, inclusive)."""
+    """Extract code lines between line_start and line_end."""
     try:
-        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = file_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
         start = max(0, line_start - 1)
         end = min(len(lines), line_end)
         return "\n".join(lines[start:end])
@@ -77,7 +77,7 @@ def format_symbol_section(
     level: int = 2,
     language: str = "English",
 ) -> str:
-    """Format a symbol's documentation with Top-Down explanation first, followed by Bottom-Up specifications."""
+    """Format symbol doc with Top-Down first, followed by Bottom-Up."""
     norm_lang = normalize_language(language)
     is_ja = norm_lang == "Japanese"
 
@@ -89,11 +89,18 @@ def format_symbol_section(
     snippet = get_code_snippet(file_path, sym.line_start, sym.line_end)
     lang_id = get_code_language(file_path.suffix)
 
-    default_purpose = f"`{sym.name}` の処理を実行する。" if is_ja else f"Executes `{sym.name}` operations."
-    default_top_down = (
-        f"- **役割**: 上位モジュールおよび呼び出し元から利用される `{sym.name}` の設計要素。\n- **データフロー**: 入力データを受け取り、要求された演算または状態遷移を実行する。"
+    default_purpose = (
+        f"`{sym.name}` の処理を実行する。"
         if is_ja
-        else f"- **Role**: Architectural element of `{sym.name}` utilized by callers and parent components.\n- **Data Flow**: Accepts contextual inputs and performs state mutation or computation."
+        else f"Executes `{sym.name}` operations."
+    )
+    default_top_down = (
+        f"- **役割**: 上位モジュールから利用される `{sym.name}` の設計要素。\n"
+        "- **データフロー**: 要求された演算または状態遷移を実行する。"
+        if is_ja
+        else f"- **Role**: Architectural element of `{sym.name}` utilized "
+        "by callers and parent components.\n- **Data Flow**: Accepts inputs "
+        "and performs state mutation or computation."
     )
 
     top_down_text = sym.top_down_context or default_top_down
@@ -111,14 +118,16 @@ def format_symbol_section(
     if sym.overview:
         lines.append(f"- **Implementation Overview**: {sym.overview}")
 
-    lines.extend([
-        "",
-        "## 3. Basic Information",
-        f"- **Name**: `{sym.name}`",
-        f"- **FQDN**: `{sym.fqdn or sym.name}`",
-        f"- **Symbol Kind**: `{kind_display}`",
-        f"- **Location**: Line {sym.line_start} to Line {sym.line_end}",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 3. Basic Information",
+            f"- **Name**: `{sym.name}`",
+            f"- **FQDN**: `{sym.fqdn or sym.name}`",
+            f"- **Symbol Kind**: `{kind_display}`",
+            f"- **Location**: Line {sym.line_start} to Line {sym.line_end}",
+        ]
+    )
     if sym.signature:
         lines.append(f"- **Signature / Type**: `{sym.signature}`")
 
@@ -148,12 +157,17 @@ def format_symbol_section(
             lines.append(f"- {r}")
 
     if snippet:
-        lines.extend(["", "## Source Code Snippet", f"```{lang_id}", snippet, "```"])
+        lines.extend(["", "## Source Code Snippet",
+                     f"```{lang_id}", snippet, "```"])
 
     if sym.children:
         lines.append("")
         for child in sym.children:
-            lines.append(format_symbol_section(child, file_path, level=level + 1, language=norm_lang))
+            lines.append(
+                format_symbol_section(
+                    child, file_path, level=level + 1, language=norm_lang
+                )
+            )
 
     return "\n".join(lines)
 
@@ -175,7 +189,9 @@ def write_single_symbol_doc(
     out_file = docgen_dir / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.md"
 
     full_path = target_dir / rel_path
-    content = format_symbol_section(symbol, full_path, level=1, language=norm_lang)
+    content = format_symbol_section(
+        symbol, full_path, level=1, language=norm_lang
+    )
 
     write_flushed_text(out_file, content + "\n")
     return out_file
@@ -188,16 +204,24 @@ def write_individual_symbol_docs(
     prefix_name: str = "",
     language: str = "English",
 ) -> List[Path]:
-    """Recursively write documentation files for each individual symbol with immediate flush."""
+    """Recursively write docs for each symbol with immediate flush."""
     norm_lang = normalize_language(language)
     created_files: List[Path] = []
 
     for sym in symbols:
-        out_file = write_single_symbol_doc(target_dir, rel_path, sym, prefix_name=prefix_name, language=norm_lang)
+        out_file = write_single_symbol_doc(
+            target_dir,
+            rel_path,
+            sym,
+            prefix_name=prefix_name,
+            language=norm_lang,
+        )
         created_files.append(out_file)
 
         if sym.children:
-            child_prefix = f"{prefix_name}{sym.name}." if prefix_name else f"{sym.name}."
+            child_prefix = (
+                f"{prefix_name}{sym.name}." if prefix_name else f"{sym.name}."
+            )
             child_files = write_individual_symbol_docs(
                 target_dir,
                 rel_path,
@@ -235,11 +259,16 @@ def write_symbol_doc(
     ]
 
     for sym in symbols:
-        lines.append(f"- `{sym.name}` ({sym.kind}) [Lines: {sym.line_start}-{sym.line_end}]")
+        line_range = f"{sym.line_start}-{sym.line_end}"
+        lines.append(
+            f"- `{sym.name}` ({sym.kind}) [Lines: {line_range}]"
+        )
 
     lines.append("")
     for sym in symbols:
-        lines.append(format_symbol_section(sym, full_path, level=2, language=norm_lang))
+        lines.append(
+            format_symbol_section(sym, full_path, level=2, language=norm_lang)
+        )
         lines.append("")
 
     write_flushed_text(out_file, "\n".join(lines).strip() + "\n")

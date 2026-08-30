@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
-"""Unit tests for docgen: DAG levels, SQLite index, Compilation DB, FQDN resolution, and multi-language support."""
+"""Unit tests for docgen."""
 
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-# Add pystdoc package root to sys.path
-_pkg_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_pkg_dir / "src"))
-
+from pystdoc.symbols import Symbol
+from pystdoc.parser_python import parse_python_file
+from pystdoc.llm_client import LLMClient, normalize_host_url
+from pystdoc.engine import run_docgen
+from pystdoc.db import DocgenDB
+from pystdoc.compilation_db import CompilationDatabase
 from pystdoc.call_graph import (
-    SymbolNode,
     flatten_symbols,
     order_symbols_by_levels,
     tarjan_scc,
 )
-from pystdoc.compilation_db import CompilationDatabase
-from pystdoc.db import DocgenDB
-from pystdoc.engine import run_docgen
-from pystdoc.llm_client import LLMClient, normalize_host_url
-from pystdoc.parser_clang import parse_clang_file
-from pystdoc.parser_python import parse_python_file
-from pystdoc.symbols import Symbol
 
 
 class TestDocgen(unittest.TestCase):
@@ -47,12 +40,23 @@ class TestDocgen(unittest.TestCase):
         self.assertIn({"fn_c"}, scc_sets)
 
     def test_dag_levels_ordering(self):
-        sym_type = Symbol(name="Point", kind="struct", line_start=1, line_end=5)
-        sym_leaf = Symbol(name="leaf", kind="function", line_start=6, line_end=8, callees=[])
-        sym_caller = Symbol(name="caller", kind="function", line_start=9, line_end=12, callees=["leaf"])
+        sym_type = Symbol(name="Point", kind="struct",
+                          line_start=1, line_end=5)
+        sym_leaf = Symbol(
+            name="leaf", kind="function", line_start=6, line_end=8, callees=[]
+        )
+        sym_caller = Symbol(
+            name="caller",
+            kind="function",
+            line_start=9,
+            line_end=12,
+            callees=["leaf"],
+        )
 
         dummy_path = self.src_dir / "sample.c"
-        nodes = flatten_symbols([sym_type, sym_leaf, sym_caller], Path("src/sample.c"), dummy_path)
+        nodes = flatten_symbols(
+            [sym_type, sym_leaf, sym_caller], Path("src/sample.c"), dummy_path
+        )
 
         levels = order_symbols_by_levels(nodes)
         self.assertTrue(len(levels) >= 2)
@@ -69,15 +73,15 @@ class TestDocgen(unittest.TestCase):
         build_dir = self.test_dir / "build"
         build_dir.mkdir(parents=True, exist_ok=True)
         comp_json = build_dir / "compile_commands.json"
+        cmd_str = "gcc -Iinclude -DTEST_MACRO=1 -c src/main.c -o build/main.o"
         comp_json.write_text(
-            """[
-              {
-                "directory": "%s",
-                "command": "gcc -Iinclude -DTEST_MACRO=1 -c src/main.c -o build/main.o",
+            f"""[
+              {{
+                "directory": "{self.test_dir}",
+                "command": "{cmd_str}",
                 "file": "src/main.c"
-              }
-            ]"""
-            % str(self.test_dir),
+              }}
+            ]""",
             encoding="utf-8",
         )
 
@@ -100,7 +104,8 @@ class TestDocgen(unittest.TestCase):
         self.assertEqual(symbols[0].name, "APIClient")
         self.assertEqual(symbols[0].fqdn, "src.client.APIClient")
         self.assertEqual(symbols[0].children[0].name, "fetch")
-        self.assertEqual(symbols[0].children[0].fqdn, "src.client.APIClient.fetch")
+        self.assertEqual(symbols[0].children[0].fqdn,
+                         "src.client.APIClient.fetch")
 
     def test_sqlite_db_operations(self):
         db_path = self.test_dir / ".docgen" / "index.db"
@@ -142,7 +147,9 @@ class TestDocgen(unittest.TestCase):
             language="English",
         )
         self.assertEqual(res_en, 0)
-        doc_en = (self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md").read_text(encoding="utf-8")
+        doc_en = (
+            self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
+        ).read_text(encoding="utf-8")
         self.assertIn("## 1. Top-Down Architectural Context & Role", doc_en)
 
         # Japanese option
@@ -154,15 +161,27 @@ class TestDocgen(unittest.TestCase):
             force=True,
         )
         self.assertEqual(res_ja, 0)
-        doc_ja = (self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md").read_text(encoding="utf-8")
+        doc_ja = (
+            self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
+        ).read_text(encoding="utf-8")
         self.assertIn("## 1. Top-Down Architectural Context & Role", doc_ja)
 
     def test_llm_client_host_and_token(self):
-        self.assertEqual(normalize_host_url("127.0.0.1:11434"), "http://127.0.0.1:11434/v1")
-        self.assertEqual(normalize_host_url("http://localhost:8000"), "http://localhost:8000/v1")
-        self.assertEqual(normalize_host_url("https://api.openai.com/v1"), "https://api.openai.com/v1")
+        self.assertEqual(
+            normalize_host_url("127.0.0.1:11434"), "http://127.0.0.1:11434/v1"
+        )
+        self.assertEqual(
+            normalize_host_url(
+                "http://localhost:8000"), "http://localhost:8000/v1"
+        )
+        self.assertEqual(
+            normalize_host_url(
+                "https://api.openai.com/v1"), "https://api.openai.com/v1"
+        )
 
-        client = LLMClient(host="127.0.0.1:11434", token="sk-test-token", context_size=8192)
+        client = LLMClient(
+            host="127.0.0.1:11434", token="sk-test-token", context_size=8192
+        )
         self.assertEqual(client.token, "sk-test-token")
         self.assertEqual(client.context_size, 8192)
 

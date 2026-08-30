@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""Unit tests for designgen with Map-Reduce chunking, SQLite caching, and multi-language support."""
+"""Unit tests for designgen."""
 
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-# Add pystdoc package root to sys.path
-_pkg_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_pkg_dir / "src"))
-
-from pystdoc.db import DocgenDB
 from pystdoc.design_engine import (
     parse_symbol_doc,
     group_docs_by_module,
@@ -31,7 +25,10 @@ class TestDesigngen(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_chunking_logic(self):
-        items = [f"Item {i}: some detailed description of function or type {i}" for i in range(50)]
+        items = [
+            f"Item {i}: some detailed description of function or type {i}"
+            for i in range(50)
+        ]
         chunks = chunk_list_by_size(items, max_items=10, max_chars=500)
         self.assertTrue(len(chunks) >= 5)
         self.assertEqual(sum(len(c) for c in chunks), 50)
@@ -51,16 +48,22 @@ class TestDesigngen(unittest.TestCase):
 
     def test_parse_and_group(self):
         sample_doc = self.docs_dir / "main.c.fn.main.md"
-        sample_doc.write_text(
+        doc_content = (
             "# Function Documentation: `main`\n\n"
-            "## 1. Design Intent & Purpose\nMain entry point of the program.\n\n"
-            "## 2. Basic Information\n- **Name**: `main`\n- **Symbol Kind**: `function`\n- **Signature / Type**: `int main()`\n\n"
-            "## 5. Called Functions\n- `helper`\n",
-            encoding="utf-8",
+            "## 1. Design Intent & Purpose\n"
+            "Main entry point of the program.\n\n"
+            "## 2. Basic Information\n"
+            "- **Name**: `main`\n"
+            "- **Symbol Kind**: `function`\n"
+            "- **Signature / Type**: `int main()`\n\n"
+            "## 5. Called Functions\n- `helper`\n"
         )
+        sample_doc.write_text(doc_content, encoding="utf-8")
 
         parsed = parse_symbol_doc(sample_doc)
-        self.assertEqual(parsed["purpose"], "Main entry point of the program.")
+        self.assertEqual(
+            parsed["purpose"], "Main entry point of the program."
+        )
         self.assertEqual(parsed["kind"], "function")
         self.assertEqual(parsed["callees"], ["helper"])
 
@@ -69,12 +72,15 @@ class TestDesigngen(unittest.TestCase):
 
     def test_run_designgen_with_cache(self):
         sample_doc = self.docs_dir / "main.c.fn.main.md"
-        sample_doc.write_text(
+        doc_content = (
             "# Function Documentation: `main`\n\n"
             "## 1. Design Intent & Purpose\nMain entry point.\n\n"
-            "## 2. Basic Information\n- **Name**: `main`\n- **Symbol Kind**: `function`\n- **Signature / Type**: `int main()`\n\n",
-            encoding="utf-8",
+            "## 2. Basic Information\n"
+            "- **Name**: `main`\n"
+            "- **Symbol Kind**: `function`\n"
+            "- **Signature / Type**: `int main()`\n\n"
         )
+        sample_doc.write_text(doc_content, encoding="utf-8")
 
         # 1st run
         res1 = run_design_generation(
@@ -93,9 +99,10 @@ class TestDesigngen(unittest.TestCase):
             language="English",
         )
         self.assertEqual(res2, 0)
-        self.assertTrue((self.test_dir / ".docgen" / "design" / "data_models.md").exists())
-        self.assertTrue((self.test_dir / ".docgen" / "design" / "execution_model.md").exists())
-        self.assertTrue((self.test_dir / ".docgen" / "design" / "overview.md").exists())
+        design_dir = self.test_dir / ".docgen" / "design"
+        self.assertTrue((design_dir / "data_models.md").exists())
+        self.assertTrue((design_dir / "execution_model.md").exists())
+        self.assertTrue((design_dir / "overview.md").exists())
 
 
 if __name__ == "__main__":

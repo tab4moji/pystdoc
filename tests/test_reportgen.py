@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
-"""Unit tests for reportgen: README generation and multi-language support."""
+"""Unit tests for reportgen."""
 
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-# Add pystdoc package root to sys.path
-_pkg_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_pkg_dir / "src"))
-
-from pystdoc.report_engine import generate_readme_doc
-from pystdoc.engine import run_docgen
 from pystdoc.design_engine import run_design_generation
+from pystdoc.engine import run_docgen
+from pystdoc.report_engine import generate_readme_doc
 
 
 class TestReportgen(unittest.TestCase):
@@ -49,11 +44,17 @@ class TestReportgen(unittest.TestCase):
         sample_file = self.test_dir / "main.c"
         sample_file.write_text("int main() { return 0; }\n", encoding="utf-8")
 
-        res1 = run_docgen(target_dir=self.test_dir, use_llm=False, allow_fallback=True)
+        res1 = run_docgen(
+            target_dir=self.test_dir, use_llm=False, allow_fallback=True
+        )
         self.assertEqual(res1, 0)
-        res2 = run_design_generation(target_dir=self.test_dir, use_llm=False, allow_fallback=True)
+        res2 = run_design_generation(
+            target_dir=self.test_dir, use_llm=False, allow_fallback=True
+        )
         self.assertEqual(res2, 0)
-        readme = generate_readme_doc(target_dir=self.test_dir, llm_client=None, allow_fallback=True)
+        generate_readme_doc(
+            target_dir=self.test_dir, llm_client=None, allow_fallback=True
+        )
         self.assertTrue((self.test_dir / ".docgen" / "README.md").exists())
 
 

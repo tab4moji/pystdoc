@@ -1,4 +1,4 @@
-"""Generic parser for shell scripts and other simple file formats using regex."""
+"""Generic parser for shell scripts and formats using regex."""
 
 import re
 from pathlib import Path
@@ -8,14 +8,18 @@ from pystdoc.symbols import Symbol
 
 
 def parse_generic_file(file_path: Path) -> List[Symbol]:
-    """Extract functions and variable assignments from Shell or generic scripts."""
+    """Extract functions & variables from Shell or generic scripts."""
     symbols: List[Symbol] = []
     try:
-        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = file_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
     except Exception:
         return []
 
-    func_pattern = re.compile(r"^(?:function\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?")
+    func_pattern = re.compile(
+        r"^(?:function\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?"
+    )
     file_prefix = file_path.name
 
     for idx, line in enumerate(lines, start=1):

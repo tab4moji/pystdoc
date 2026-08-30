@@ -1,8 +1,8 @@
-"""Clang-based parser for C/C++ source and header files using libclang with compilation database integration."""
+"""Clang parser for C/C++ source/header files using libclang."""
 
 import os
 from pathlib import Path
-from typing import Any, List, Optional, Set
+from typing import List, Optional, Set
 
 from pystdoc.symbols import Parameter, Symbol
 from pystdoc.compilation_db import CompilationDatabase
@@ -65,7 +65,7 @@ def parse_clang_file(
     file_path: Path,
     comp_db: Optional[CompilationDatabase] = None,
 ) -> List[Symbol]:
-    """Parse a C/C++ or header file with compile flags and extract symbols with FQDN."""
+    """Parse a C/C++ or header file with compile flags and extract symbols."""
     _ensure_libclang_loaded()
     import clang.cindex
 
@@ -89,7 +89,10 @@ def parse_clang_file(
     file_prefix = file_path.name
 
     for cursor in tu.cursor.get_children():
-        if not cursor.location.file or os.path.abspath(cursor.location.file.name) != target_abs:
+        if (
+            not cursor.location.file
+            or os.path.abspath(cursor.location.file.name) != target_abs
+        ):
             continue
 
         sym = _parse_cursor(cursor, file_path, prefix=file_prefix)
@@ -99,7 +102,9 @@ def parse_clang_file(
     return symbols
 
 
-def _parse_cursor(cursor, file_path: Path, prefix: str = "") -> Optional[Symbol]:
+def _parse_cursor(
+    cursor, file_path: Path, prefix: str = ""
+) -> Optional[Symbol]:
     """Convert a Clang cursor to a Symbol data structure with FQDN."""
     import clang.cindex
 
@@ -132,7 +137,11 @@ def _parse_cursor(cursor, file_path: Path, prefix: str = "") -> Optional[Symbol]
     signature = cursor.type.spelling if cursor.type else ""
     fqdn = f"{prefix}::{name}" if prefix else name
 
-    callees = _extract_callees(cursor, file_path) if kind in ("function", "method", "constructor", "destructor") else []
+    callees = (
+        _extract_callees(cursor, file_path)
+        if kind in ("function", "method", "constructor", "destructor")
+        else []
+    )
 
     params: List[Parameter] = []
     return_type = ""

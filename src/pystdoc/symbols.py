@@ -7,11 +7,24 @@ from typing import List
 def get_kind_prefix(kind: str) -> str:
     """Return category prefix for file naming: fn, var, type, const."""
     kind_lower = kind.lower()
-    if kind_lower in ("function", "async_function", "method", "constructor", "destructor"):
+    if kind_lower in (
+        "function",
+        "async_function",
+        "method",
+        "constructor",
+        "destructor",
+    ):
         return "fn"
     elif kind_lower in ("variable", "field", "var"):
         return "var"
-    elif kind_lower in ("struct", "class", "enum", "typedef", "type_alias", "type"):
+    elif kind_lower in (
+        "struct",
+        "class",
+        "enum",
+        "typedef",
+        "type_alias",
+        "type",
+    ):
         return "type"
     elif kind_lower in ("enum_constant", "constant", "macro", "const"):
         return "const"
@@ -32,7 +45,8 @@ class Symbol:
     kind: str  # function, method, class, struct, enum, variable, field, etc.
     line_start: int
     line_end: int
-    fqdn: str = ""  # Fully Qualified Domain Name (e.g. src.network.client.fetch_data)
+    # Fully Qualified Domain Name (e.g. src.network.client.fetch_data)
+    fqdn: str = ""
     signature: str = ""
     doc: str = ""
     purpose: str = ""

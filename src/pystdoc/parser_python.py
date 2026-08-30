@@ -1,7 +1,6 @@
 """Python AST parser with FQDN extraction and import resolution."""
 
 import ast
-import os
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
@@ -94,8 +93,10 @@ class CalleeVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def parse_python_file(file_path: Path, base_dir: Optional[Path] = None) -> List[Symbol]:
-    """Parse a Python source file using AST and attach clean relative FQDNs."""
+def parse_python_file(
+    file_path: Path, base_dir: Optional[Path] = None
+) -> List[Symbol]:
+    """Parse a Python source file using AST and attach clean FQDNs."""
     try:
         content = file_path.read_text(encoding="utf-8")
         tree = ast.parse(content, filename=str(file_path))

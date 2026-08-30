@@ -1,10 +1,10 @@
-"""Call graph construction, Tarjan SCC cycle condensation, FQDN matching, and Level-by-Level DAG parallel ordering."""
+"""Call graph, Tarjan SCC, and Level DAG parallel ordering."""
 
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set
 
 from pystdoc.symbols import Symbol, get_kind_prefix
 
@@ -27,7 +27,7 @@ def flatten_symbols(
     full_path: Path,
     prefix: str = "",
 ) -> List[SymbolNode]:
-    """Recursively collect all symbols into a flat list of SymbolNodes with FQDN and kind prefixes."""
+    """Recursively collect symbols into flat list with FQDN and prefixes."""
     nodes: List[SymbolNode] = []
     for sym in symbols:
         k_prefix = get_kind_prefix(sym.kind)
@@ -35,7 +35,8 @@ def flatten_symbols(
         identifier = f"{k_prefix}.{raw_name}"
         uid = f"{rel_path.as_posix()}::{identifier}"
 
-        fqdn = sym.fqdn or f"{rel_path.with_suffix('').as_posix().replace('/', '.')}.{raw_name}"
+        base_mod = rel_path.with_suffix("").as_posix().replace("/", ".")
+        fqdn = sym.fqdn or f"{base_mod}.{raw_name}"
 
         node = SymbolNode(
             symbol=sym,
@@ -60,7 +61,7 @@ def flatten_symbols(
 
 
 def link_variables_to_functions(nodes: List[SymbolNode]) -> None:
-    """Detect which functions directly reference each variable using FQDN and scope matching."""
+    """Detect functions referencing each variable using FQDN/scope."""
     fn_nodes = [n for n in nodes if get_kind_prefix(n.symbol.kind) == "fn"]
     var_nodes = [n for n in nodes if get_kind_prefix(n.symbol.kind) == "var"]
 
@@ -70,25 +71,37 @@ def link_variables_to_functions(nodes: List[SymbolNode]) -> None:
 
         for f_node in fn_nodes:
             if f_node.rel_path == v_node.rel_path:
-                if f_node.symbol.line_start <= v_node.symbol.line_start <= f_node.symbol.line_end:
-                    ref_funcs.add(f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)")
+                if (
+                    f_node.symbol.line_start
+                    <= v_node.symbol.line_start
+                    <= f_node.symbol.line_end
+                ):
+                    ref_funcs.add(
+                        f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)"
+                    )
                     continue
 
             try:
-                code_lines = f_node.full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                code_lines = f_node.full_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
                 start = max(0, f_node.symbol.line_start - 1)
                 end = min(len(code_lines), f_node.symbol.line_end)
                 func_code = "\n".join(code_lines[start:end])
 
                 if re.search(rf"\b{re.escape(v_name)}\b", func_code):
-                    ref_funcs.add(f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)")
+                    ref_funcs.add(
+                        f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)"
+                    )
             except Exception:
                 pass
 
         v_node.symbol.referencing_functions = sorted(list(ref_funcs))
 
 
-def tarjan_scc(node_ids: List[str], adj: Dict[str, Set[str]]) -> List[List[str]]:
+def tarjan_scc(
+    node_ids: List[str], adj: Dict[str, Set[str]]
+) -> List[List[str]]:
     """Tarjan's strongly connected components algorithm in O(V+E) time."""
     index = 0
     indices: Dict[str, int] = {}
@@ -129,8 +142,10 @@ def tarjan_scc(node_ids: List[str], adj: Dict[str, Set[str]]) -> List[List[str]]
     return sccs
 
 
-def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
-    """Partition symbol nodes into strictly dependency-safe levels for parallel processing."""
+def order_symbols_by_levels(
+    nodes: List[SymbolNode],
+) -> List[List[SymbolNode]]:
+    """Partition symbol nodes into strictly dependency-safe levels."""
     id_to_node: Dict[str, SymbolNode] = {n.unique_id: n for n in nodes}
     fqdn_to_node_ids: Dict[str, List[str]] = defaultdict(list)
     short_name_to_ids: Dict[str, List[str]] = defaultdict(list)
@@ -141,10 +156,14 @@ def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
             fqdn_to_node_ids[node.fqdn].append(node.unique_id)
         if "::" in node.unique_id:
             sym_part = node.unique_id.split("::", 1)[1]
-            raw_without_prefix = sym_part.split(".", 1)[-1] if "." in sym_part else sym_part
+            raw_without_prefix = (
+                sym_part.split(".", 1)[-1] if "." in sym_part else sym_part
+            )
             short_name_to_ids[raw_without_prefix].append(node.unique_id)
 
-    caller_to_callees: Dict[str, Set[str]] = {n.unique_id: set() for n in nodes}
+    caller_to_callees: Dict[str, Set[str]] = {
+        n.unique_id: set() for n in nodes
+    }
 
     for node in nodes:
         prefix_type = get_kind_prefix(node.symbol.kind)
@@ -155,11 +174,19 @@ def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
                     matched_ids = short_name_to_ids.get(callee_name, [])
 
                 for target_id in matched_ids:
-                    if target_id != node.unique_id and get_kind_prefix(id_to_node[target_id].symbol.kind) == "fn":
+                    is_fn = (
+                        get_kind_prefix(id_to_node[target_id].symbol.kind)
+                        == "fn"
+                    )
+                    if target_id != node.unique_id and is_fn:
                         caller_to_callees[node.unique_id].add(target_id)
                         node.direct_callee_ids.add(target_id)
 
-    base_types_and_vars = [n for n in nodes if get_kind_prefix(n.symbol.kind) in ("const", "type", "var")]
+    base_types_and_vars = [
+        n
+        for n in nodes
+        if get_kind_prefix(n.symbol.kind) in ("const", "type", "var")
+    ]
     for n in base_types_and_vars:
         n.dag_level = 0
 
@@ -174,7 +201,9 @@ def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
         for member_id in scc_members:
             node_to_scc_idx[member_id] = scc_idx
             if len(scc_members) > 1:
-                id_to_node[member_id].scc_group_ids = [m for m in scc_members if m != member_id]
+                id_to_node[member_id].scc_group_ids = [
+                    m for m in scc_members if m != member_id
+                ]
 
     # Condensation DAG construction
     scc_callees: Dict[int, Set[int]] = defaultdict(set)
@@ -203,7 +232,9 @@ def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
         curr_scc = queue.popleft()
         for parent_scc in scc_callers[curr_scc]:
             if scc_callees[parent_scc].issubset(resolved_sccs):
-                max_child_rank = max(scc_rank[c] for c in scc_callees[parent_scc])
+                max_child_rank = max(
+                    scc_rank[c] for c in scc_callees[parent_scc]
+                )
                 scc_rank[parent_scc] = max_child_rank + 1
                 resolved_sccs.add(parent_scc)
                 queue.append(parent_scc)
@@ -226,7 +257,9 @@ def order_symbols_by_levels(nodes: List[SymbolNode]) -> List[List[SymbolNode]]:
             level_groups[node_level].append(node)
 
     max_lvl = max(level_groups.keys()) if level_groups else 0
-    levels_list = [level_groups[i] for i in range(max_lvl + 1) if level_groups[i]]
+    levels_list = [
+        level_groups[i] for i in range(max_lvl + 1) if level_groups[i]
+    ]
     return levels_list
 
 
@@ -243,7 +276,7 @@ def build_callee_context_summary(
     node: SymbolNode,
     resolved_symbols: Dict[str, SymbolNode],
 ) -> str:
-    """Build summary text of called low-level functions and mutual recursion peers for LLM prompt."""
+    """Build summary text of called functions and recursion peers for LLM."""
     lines: List[str] = []
 
     if node.scc_group_ids:
@@ -251,10 +284,15 @@ def build_callee_context_summary(
         for peer_id in node.scc_group_ids:
             peer_node = resolved_symbols.get(peer_id)
             if peer_node:
-                peer_names.append(f"`{peer_node.symbol.name}` ({peer_node.rel_path.name})")
+                peer_names.append(
+                    f"`{peer_node.symbol.name}` ({peer_node.rel_path.name})"
+                )
         if peer_names:
             lines.append("[Mutual Recursion Group]:")
-            lines.append(f"- Note: This function operates in mutual recursion with {', '.join(peer_names)}.")
+            lines.append(
+                f"- Note: This function operates in mutual recursion "
+                f"with {', '.join(peer_names)}."
+            )
             lines.append("")
 
     if node.direct_callee_ids:
@@ -264,14 +302,24 @@ def build_callee_context_summary(
             if callee_node:
                 sym = callee_node.symbol
                 purpose = sym.purpose or "Executes operation"
-                inputs = sym.inputs_note or ", ".join(f"{p.name}: {p.type_hint}" for p in sym.parameters) or "None"
+                params_str = ", ".join(
+                    f"{p.name}: {p.type_hint}" for p in sym.parameters
+                )
+                inputs = sym.inputs_note or params_str or "None"
                 outputs = sym.outputs_note or sym.return_type or "None"
-                lines.append(f"- Function `{sym.name}` (FQDN: `{sym.fqdn or sym.name}`, File: `{callee_node.rel_path.name}`):")
+                fqdn_str = sym.fqdn or sym.name
+                lines.append(
+                    f"- Function `{sym.name}` (FQDN: `{fqdn_str}`, "
+                    f"File: `{callee_node.rel_path.name}`):"
+                )
                 lines.append(f"  - Purpose: {purpose}")
                 lines.append(f"  - Inputs: {inputs}")
                 lines.append(f"  - Outputs: {outputs}")
                 if sym.overview:
                     first_lines = sym.overview.strip().splitlines()[:2]
-                    lines.append(f"  - Summary: {' / '.join(l.strip() for l in first_lines)}")
+                    summary_str = " / ".join(
+                        line_item.strip() for line_item in first_lines
+                    )
+                    lines.append(f"  - Summary: {summary_str}")
 
     return "\n".join(lines)

@@ -1,13 +1,20 @@
-"""File scanner: discovers source code and script files in the target project."""
+"""File scanner: discovers source and script files in the target project."""
 
 import os
 from pathlib import Path
 from typing import List, Set
 
 TARGET_EXTENSIONS: Set[str] = {
-    ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".cxx",
+    ".hh",
     ".py",
-    ".sh", ".bash",
+    ".sh",
+    ".bash",
     ".rs",
 }
 
@@ -31,12 +38,15 @@ EXCLUDED_DIRS: Set[str] = {
 
 
 def scan_files(target_dir: Path) -> List[Path]:
-    """Recursively scan target directory and return sorted relative paths of matching files."""
+    """Recursively scan target directory and return sorted relative paths."""
     matched_files: List[Path] = []
     target_dir = target_dir.resolve()
 
     for root, dirs, files in os.walk(target_dir):
-        dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        dirs[:] = [
+            d for d in dirs
+            if d not in EXCLUDED_DIRS and not d.startswith(".")
+        ]
 
         for file_name in files:
             file_path = Path(root) / file_name
