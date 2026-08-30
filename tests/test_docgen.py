@@ -142,7 +142,7 @@ class TestDocgen(unittest.TestCase):
         )
         self.assertEqual(res_en, 0)
         doc_en = (self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md").read_text(encoding="utf-8")
-        self.assertIn("## 1. Design Intent & Purpose", doc_en)
+        self.assertIn("## 1. Top-Down Architectural Context & Role", doc_en)
 
         # Japanese option
         res_ja = run_docgen(
@@ -154,7 +154,7 @@ class TestDocgen(unittest.TestCase):
         )
         self.assertEqual(res_ja, 0)
         doc_ja = (self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md").read_text(encoding="utf-8")
-        self.assertIn("## 1. Design Intent & Purpose", doc_ja)
+        self.assertIn("## 1. Top-Down Architectural Context & Role", doc_ja)
 
     def test_llm_client_host_and_token(self):
         self.assertEqual(normalize_host_url("127.0.0.1:11434"), "http://127.0.0.1:11434/v1")

@@ -1,4 +1,4 @@
-"""Markdown documentation generator for individual symbols and files with multi-language support."""
+"""Markdown documentation generator for individual symbols and files with top-down/bottom-up layout and multi-language support."""
 
 import os
 import re
@@ -77,7 +77,7 @@ def format_symbol_section(
     level: int = 2,
     language: str = "English",
 ) -> str:
-    """Format a symbol's documentation into standardized Markdown string."""
+    """Format a symbol's documentation with Top-Down explanation first, followed by Bottom-Up specifications."""
     norm_lang = normalize_language(language)
     is_ja = norm_lang == "Japanese"
 
@@ -90,46 +90,62 @@ def format_symbol_section(
     lang_id = get_code_language(file_path.suffix)
 
     default_purpose = f"`{sym.name}` の処理を実行する。" if is_ja else f"Executes `{sym.name}` operations."
+    default_top_down = (
+        f"- **役割**: 上位モジュールおよび呼び出し元から利用される `{sym.name}` の設計要素。\n- **データフロー**: 入力データを受け取り、要求された演算または状態遷移を実行する。"
+        if is_ja
+        else f"- **Role**: Architectural element of `{sym.name}` utilized by callers and parent components.\n- **Data Flow**: Accepts contextual inputs and performs state mutation or computation."
+    )
+
+    top_down_text = sym.top_down_context or default_top_down
+    bottom_up_purpose = sym.purpose or default_purpose
 
     lines = [
         f"{h_prefix} {sym.kind.capitalize()} Documentation: `{sym.name}`",
         "",
-        "## 1. Design Intent & Purpose",
-        sym.purpose or default_purpose,
+        "## 1. Top-Down Architectural Context & Role",
+        top_down_text,
         "",
-        "## 2. Basic Information",
+        "## 2. Bottom-Up Implementation Specifications",
+        f"- **Core Purpose**: {bottom_up_purpose}",
+    ]
+    if sym.overview:
+        lines.append(f"- **Implementation Overview**: {sym.overview}")
+
+    lines.extend([
+        "",
+        "## 3. Basic Information",
         f"- **Name**: `{sym.name}`",
         f"- **FQDN**: `{sym.fqdn or sym.name}`",
         f"- **Symbol Kind**: `{kind_display}`",
         f"- **Location**: Line {sym.line_start} to Line {sym.line_end}",
-    ]
+    ])
     if sym.signature:
         lines.append(f"- **Signature / Type**: `{sym.signature}`")
 
     if sym.parameters:
-        lines.extend(["", "## 3. Parameters"])
+        lines.extend(["", "## 4. Parameters"])
         for p in sym.parameters:
             p_type = f": `{p.type_hint}`" if p.type_hint else ""
             lines.append(f"- `{p.name}`{p_type}")
     else:
-        lines.extend(["", "## 3. Parameters", "- None"])
+        lines.extend(["", "## 4. Parameters", "- None"])
 
-    if sym.return_type or sym.outputs_note:
-        lines.extend(["", "## 4. Return Value", f"- Type: `{sym.return_type or 'void / None'}`"])
+    if sym.return_type or sym.outputs_note or sym.inputs_note:
+        lines.extend(["", "## 5. Input / Return Specifications"])
+        if sym.inputs_note:
+            lines.append(f"- Input Constraints: {sym.inputs_note}")
+        lines.append(f"- Return Type: `{sym.return_type or 'void / None'}`")
         if sym.outputs_note:
-            lines.append(f"- Description: {sym.outputs_note}")
+            lines.append(f"- Return Value & Side Effects: {sym.outputs_note}")
 
     if sym.callees:
-        lines.extend(["", "## 5. Called Functions"])
+        lines.extend(["", "## 6. Called Functions"])
         for c in sym.callees:
             lines.append(f"- `{c}`")
     elif sym.referencing_functions:
-        lines.extend(["", "## 5. Referencing Functions"])
+        lines.extend(["", "## 6. Referencing Functions"])
         for r in sym.referencing_functions:
             lines.append(f"- {r}")
-
-    if sym.top_down_context:
-        lines.extend(["", "## 6. Usage Context & Purpose", sym.top_down_context])
 
     if snippet:
         lines.extend(["", "## Source Code Snippet", f"```{lang_id}", snippet, "```"])

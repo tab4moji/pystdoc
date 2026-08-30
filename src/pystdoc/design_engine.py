@@ -35,10 +35,23 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
     if m_title:
         data["title"] = m_title.group(1).strip()
 
-    m_purpose = re.search(r"## 1\..*\n([\s\S]*?)(?=\n## 2\.|\Z)", text)
-    if m_purpose:
-        data["purpose"] = m_purpose.group(1).strip()
+    # 1. Extract Top-Down Context if present
+    m_top_down = re.search(r"## 1\..*Top-Down.*\n([\s\S]*?)(?=\n## 2\.|\Z)", text, re.IGNORECASE)
+    if m_top_down:
+        data["context"] = m_top_down.group(1).strip()
 
+    # 2. Extract Bottom-Up Purpose (from new layout or legacy layout)
+    m_purpose_new = re.search(r"- \*\*Core Purpose\*\*:\s*([^\n]+)", text)
+    if m_purpose_new:
+        data["purpose"] = m_purpose_new.group(1).strip()
+    else:
+        m_purpose_legacy = re.search(r"## 1\..*(?:Design Intent|Purpose).*\n([\s\S]*?)(?=\n## 2\.|\Z)", text)
+        if m_purpose_legacy and not m_top_down:
+            data["purpose"] = m_purpose_legacy.group(1).strip()
+        elif m_top_down:
+            data["purpose"] = data["context"]
+
+    # 3. Extract Kind & Signature
     m_kind = re.search(r"- \*\*(?:Symbol Kind|Kind)[^*]*\*\*:\s*`?([^`\n]+)`?", text, re.IGNORECASE)
     if m_kind:
         data["kind"] = m_kind.group(1).strip().split()[0]
@@ -46,19 +59,16 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
     if m_sig:
         data["signature"] = m_sig.group(1).strip()
 
-    m_callees = re.search(r"## 5\..*(?:Called Functions|Callees).*\n([\s\S]*?)(?=\n## |\Z)", text, re.IGNORECASE)
+    # 4. Extract Callees & References (section 5 or 6)
+    m_callees = re.search(r"## [56]\..*(?:Called Functions|Callees).*\n([\s\S]*?)(?=\n## |\Z)", text, re.IGNORECASE)
     if m_callees:
         callee_lines = re.findall(r"- `([^`]+)`", m_callees.group(1))
         data["callees"] = [c for c in callee_lines if c not in ("None", "none")]
 
-    m_refs = re.search(r"## 5\..*(?:Referencing Functions|References).*\n([\s\S]*?)(?=\n## |\Z)", text, re.IGNORECASE)
+    m_refs = re.search(r"## [56]\..*(?:Referencing Functions|References).*\n([\s\S]*?)(?=\n## |\Z)", text, re.IGNORECASE)
     if m_refs:
         ref_lines = re.findall(r"- `([^`]+)`", m_refs.group(1))
         data["referencing_funcs"] = [r for r in ref_lines if r not in ("None", "none")]
-
-    m_context = re.search(r"## 6\..*\n([\s\S]*?)(?=\n## |\Z)", text)
-    if m_context:
-        data["context"] = m_context.group(1).strip()
 
     return data
 
