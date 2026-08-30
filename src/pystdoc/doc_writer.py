@@ -14,11 +14,11 @@ from pystdoc.symbols import Symbol, get_kind_prefix
 
 
 def normalize_language(lang: Optional[str]) -> str:
-    """Normalize language string into English representation (e.g. 'Japanese', 'English')."""
+    """Normalize language string into standard representation (e.g. 'Japanese', 'English')."""
     if not lang:
         return "English"
     l_lower = lang.strip().lower()
-    if l_lower in ("japanese", "ja", "jp"):
+    if l_lower in ("japanese", "ja", "jp", "日本語"):
         return "Japanese"
     elif l_lower in ("english", "en"):
         return "English"
@@ -78,6 +78,9 @@ def format_symbol_section(
     language: str = "English",
 ) -> str:
     """Format a symbol's documentation into standardized Markdown string."""
+    norm_lang = normalize_language(language)
+    is_ja = norm_lang == "Japanese"
+
     h_prefix = "#" * level
     kind_display = sym.kind
     if sym.fqdn:
@@ -86,11 +89,13 @@ def format_symbol_section(
     snippet = get_code_snippet(file_path, sym.line_start, sym.line_end)
     lang_id = get_code_language(file_path.suffix)
 
+    default_purpose = f"`{sym.name}` の処理を実行する。" if is_ja else f"Executes `{sym.name}` operations."
+
     lines = [
         f"{h_prefix} {sym.kind.capitalize()} Documentation: `{sym.name}`",
         "",
         "## 1. Design Intent & Purpose",
-        sym.purpose or f"Executes `{sym.name}` operations.",
+        sym.purpose or default_purpose,
         "",
         "## 2. Basic Information",
         f"- **Name**: `{sym.name}`",
@@ -132,7 +137,7 @@ def format_symbol_section(
     if sym.children:
         lines.append("")
         for child in sym.children:
-            lines.append(format_symbol_section(child, file_path, level=level + 1, language=language))
+            lines.append(format_symbol_section(child, file_path, level=level + 1, language=norm_lang))
 
     return "\n".join(lines)
 
@@ -145,6 +150,7 @@ def write_single_symbol_doc(
     language: str = "English",
 ) -> Path:
     """Write an individual symbol document with immediate flush."""
+    norm_lang = normalize_language(language)
     docgen_dir = target_dir / ".docgen" / "documents"
     docgen_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,7 +159,7 @@ def write_single_symbol_doc(
     out_file = docgen_dir / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.md"
 
     full_path = target_dir / rel_path
-    content = format_symbol_section(symbol, full_path, level=1, language=language)
+    content = format_symbol_section(symbol, full_path, level=1, language=norm_lang)
 
     write_flushed_text(out_file, content + "\n")
     return out_file
@@ -167,10 +173,11 @@ def write_individual_symbol_docs(
     language: str = "English",
 ) -> List[Path]:
     """Recursively write documentation files for each individual symbol with immediate flush."""
+    norm_lang = normalize_language(language)
     created_files: List[Path] = []
 
     for sym in symbols:
-        out_file = write_single_symbol_doc(target_dir, rel_path, sym, prefix_name=prefix_name, language=language)
+        out_file = write_single_symbol_doc(target_dir, rel_path, sym, prefix_name=prefix_name, language=norm_lang)
         created_files.append(out_file)
 
         if sym.children:
@@ -180,7 +187,7 @@ def write_individual_symbol_docs(
                 rel_path,
                 sym.children,
                 prefix_name=child_prefix,
-                language=language,
+                language=norm_lang,
             )
             created_files.extend(child_files)
 
@@ -195,6 +202,7 @@ def write_symbol_doc(
     language: str = "English",
 ) -> Path:
     """Write comprehensive file documentation with immediate flush."""
+    norm_lang = normalize_language(language)
     docgen_dir = target_dir / ".docgen" / "documents"
     docgen_dir.mkdir(parents=True, exist_ok=True)
 
@@ -215,7 +223,7 @@ def write_symbol_doc(
 
     lines.append("")
     for sym in symbols:
-        lines.append(format_symbol_section(sym, full_path, level=2, language=language))
+        lines.append(format_symbol_section(sym, full_path, level=2, language=norm_lang))
         lines.append("")
 
     write_flushed_text(out_file, "\n".join(lines).strip() + "\n")

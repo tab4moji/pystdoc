@@ -1,4 +1,4 @@
-"""LLM Client for LiteRT-LM, Ollama, and OpenAI-compatible endpoints with standard host/token/context/language options."""
+"""LLM Client for LiteRT-LM, Ollama, and OpenAI-compatible endpoints with multi-language JSON normalization and retry resilience."""
 
 import json
 import os
@@ -31,6 +31,71 @@ def normalize_host_url(host: Optional[str]) -> str:
     return h
 
 
+def normalize_llm_json_dict(data: Dict[str, Any]) -> Dict[str, str]:
+    """Normalize JSON dictionary keys from any language (English, Japanese, etc.) into standardized keys."""
+    normalized: Dict[str, str] = {}
+
+    for k in ("purpose", "目的", "設計意図", "意図", "description", "target", "role", "機能"):
+        if k in data and data[k]:
+            normalized["purpose"] = str(data[k]).strip()
+            break
+
+    for k in ("inputs", "入力", "引数", "パラメータ", "input", "arguments", "parameters"):
+        if k in data and data[k]:
+            normalized["inputs"] = str(data[k]).strip()
+            break
+
+    for k in ("outputs", "出力", "戻り値", "返り値", "output", "returns", "result"):
+        if k in data and data[k]:
+            normalized["outputs"] = str(data[k]).strip()
+            break
+
+    for k in ("overview", "概要", "要約", "説明", "summary", "details"):
+        if k in data and data[k]:
+            normalized["overview"] = str(data[k]).strip()
+            break
+
+    for k in ("significance", "重要性", "役割", "意義", "role"):
+        if k in data and data[k]:
+            normalized["significance"] = str(data[k]).strip()
+            break
+
+    for k in ("usage_scenario", "利用シナリオ", "使用シナリオ", "データフロー", "データ受け渡し", "scenario"):
+        if k in data and data[k]:
+            normalized["usage_scenario"] = str(data[k]).strip()
+            break
+
+    for k in ("top_down_summary", "要約", "概要", "全体設計要約", "summary"):
+        if k in data and data[k]:
+            normalized["top_down_summary"] = str(data[k]).strip()
+            break
+
+    return normalized
+
+
+def extract_json_from_text(raw_text: str) -> Dict[str, Any]:
+    """Robustly extract and parse JSON object from LLM response text."""
+    clean = raw_text.strip()
+    # 1. Try markdown code block extraction
+    m_code = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean, re.IGNORECASE)
+    if m_code:
+        try:
+            return json.loads(m_code.group(1).strip())
+        except Exception:
+            pass
+
+    # 2. Try outermost curly braces
+    m_brace = re.search(r"\{[\s\S]*\}", clean)
+    if m_brace:
+        try:
+            return json.loads(m_brace.group(0).strip())
+        except Exception:
+            pass
+
+    # 3. Direct parse
+    return json.loads(clean)
+
+
 class LLMClient:
     """OpenAI-compatible client with standard host, token, context size, and model configuration."""
 
@@ -59,7 +124,6 @@ class LLMClient:
         if self._ping_url(self.base_url):
             return True
 
-        # If the user explicitly passed a host/base_url, never overwrite it with default WSL fallback
         if self.user_specified_host:
             return False
 
@@ -191,7 +255,7 @@ class LLMClient:
     ) -> Dict[str, str]:
         """Generate concise explanations for a symbol in JSON format in the requested natural language."""
         prompt = f"""Please analyze the following {lang} symbol `{name}` ({kind}) and output concise design intent and specifications in JSON format.
-Output Language: {language} (Write all text values in {language}).
+Output Language: {language} (Write all explanation text in {language}).
 Be concise and avoid repetition.
 
 ### Signature / Type:
@@ -213,12 +277,12 @@ Be concise and avoid repetition.
 {code}
 ```
 
-Return ONLY a valid JSON object (all string values in {language}):
+Return ONLY a valid JSON object matching these keys (values written in {language}):
 {{
-  "purpose": "Core design intent and purpose (1-2 concise sentences)",
+  "purpose": "Core design intent and purpose (1-2 concise sentences in {language})",
   "inputs": "Input parameters description (or None)",
   "outputs": "Return value or side effects description",
-  "overview": "Concise summary of implementation and role (1-3 sentences)"
+  "overview": "Concise summary of implementation and role (1-3 sentences in {language})"
 }}
 """
         messages = [
@@ -227,19 +291,18 @@ Return ONLY a valid JSON object (all string values in {language}):
         ]
 
         try:
-            raw_res = self.chat_completion(messages, json_mode=True, max_tokens=768, timeout=60)
-            m = re.search(r"\{[\s\S]*\}", raw_res)
-            if m:
-                return json.loads(m.group(0))
-            return json.loads(raw_res)
+            raw_res = self.chat_completion(messages, json_mode=False, max_tokens=768, timeout=60)
+            parsed = extract_json_from_text(raw_res)
+            return normalize_llm_json_dict(parsed)
         except Exception as e:
             if not allow_fallback:
                 raise LLMError(f"Failed to analyze symbol `{name}`: {e}") from e
+            is_ja = language in ("Japanese", "日本語")
             return {
-                "purpose": f"Executes `{name}` operations.",
-                "inputs": "Accepts input parameters.",
-                "outputs": "Returns result value.",
-                "overview": f"Basic operation for `{name}`.",
+                "purpose": f"`{name}` の処理を実行する。" if is_ja else f"Executes `{name}` operations.",
+                "inputs": "パラメータを受け取る。" if is_ja else "Accepts input parameters.",
+                "outputs": "結果値を返す。" if is_ja else "Returns result value.",
+                "overview": f"`{name}` の基本処理。" if is_ja else f"Basic operation for `{name}`.",
             }
 
     def refine_variable_top_down(
@@ -283,16 +346,15 @@ Return ONLY a valid JSON object (all string values in {language}):
         ]
 
         try:
-            raw_res = self.chat_completion(messages, json_mode=True, max_tokens=768, timeout=60)
-            m = re.search(r"\{[\s\S]*\}", raw_res)
-            if m:
-                return json.loads(m.group(0))
-            return json.loads(raw_res)
+            raw_res = self.chat_completion(messages, json_mode=False, max_tokens=768, timeout=60)
+            parsed = extract_json_from_text(raw_res)
+            return normalize_llm_json_dict(parsed)
         except Exception as e:
             if not allow_fallback:
                 raise LLMError(f"Failed top-down variable refinement for `{var_name}`: {e}") from e
+            is_ja = language in ("Japanese", "日本語")
             return {
-                "significance": f"`{var_name}` is a state/data utilized by callers.",
-                "usage_scenario": "Passed and transformed across calling functions.",
-                "top_down_summary": f"Design summary for `{var_name}`.",
+                "significance": f"`{var_name}` は呼び出し元で使用される状態/データ。" if is_ja else f"`{var_name}` is a state/data utilized by callers.",
+                "usage_scenario": "呼び出し元関数間で受け渡される。" if is_ja else "Passed and transformed across calling functions.",
+                "top_down_summary": f"`{var_name}` の設計概要。" if is_ja else f"Design summary for `{var_name}`.",
             }
