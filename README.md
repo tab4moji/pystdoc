@@ -4,6 +4,12 @@
 
 It analyzes codebases in **bottom-up + top-down topological passes**, constructs hierarchical execution/data models, and synthesizes clean, human-centric Markdown and Mermaid diagrams within a **16K context window**.
 
+> [!WARNING]
+> **⚠️ Caution: Potential LLM API Usage Costs**
+> `pystdoc` performs thorough, multi-pass analysis by sending prompts for individual symbols, modules, and architecture synthesis.
+> When using commercial paid API endpoints (such as OpenAI GPT-4, Claude, etc.), analyzing large codebases can consume a significant amount of tokens and may incur substantial financial costs.
+> We **strongly recommend** using self-hosted/local LLM backends (e.g., **LiteRT-LM, Ollama, vLLM, or LocalAI**) or setting strict API budget limits before running against large projects.
+
 ---
 
 ## 📁 Output Directory: `.docgen/`
