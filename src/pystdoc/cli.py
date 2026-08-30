@@ -26,7 +26,7 @@ def docgen_main() -> None:
     parser.add_argument("--force", "-f", action="store_true", help="Force regenerate all documents ignoring cache")
     parser.add_argument("--allow-fallback", action="store_true", help="Allow fallback to static template on LLM failure")
     parser.add_argument("--compile-commands", default=None, help="Path to compile_commands.json (auto-detected if omitted)")
-    parser.add_argument("--concurrency", "-j", type=int, default=4, help="Number of parallel LLM workers (default: 4)")
+    parser.add_argument("--concurrency", "-j", type=int, default=1, help="Number of parallel LLM workers (default: 1)")
 
     args = parser.parse_args()
     sys.exit(
@@ -98,7 +98,7 @@ def reportgen_main() -> None:
     parser.add_argument("--force", "-f", action="store_true", help="Force regenerate all documents ignoring cache")
     parser.add_argument("--allow-fallback", action="store_true", help="Allow fallback to static template on LLM failure")
     parser.add_argument("--compile-commands", default=None, help="Path to compile_commands.json (auto-detected if omitted)")
-    parser.add_argument("--concurrency", "-j", type=int, default=4, help="Number of parallel LLM workers (default: 4)")
+    parser.add_argument("--concurrency", "-j", type=int, default=1, help="Number of parallel LLM workers (default: 1)")
     parser.add_argument("--skip-docgen", action="store_true", help="Skip docgen step")
     parser.add_argument("--skip-designgen", action="store_true", help="Skip designgen step")
 

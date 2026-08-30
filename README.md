@@ -97,7 +97,7 @@ designgen --dir ./my_project/
 | `--model` | `-m`, `LLM_MODEL` | `gemma4-26b-a4b` | LLM model identifier |
 | `--token` | `--api-key`, `OPENAI_API_KEY` | `None` | API Bearer token |
 | `--context-size` | `--ctx-size` | `16384` | Context window size |
-| `--concurrency` | `-j` | `4` | Number of parallel LLM workers |
+| `--concurrency` | `-j` | `1` | Number of parallel LLM workers |
 | `--force` | `-f` | `false` | Force regenerate all documents ignoring cache |
 | `--compile-commands` | | `None` | Path to `compile_commands.json` |
 

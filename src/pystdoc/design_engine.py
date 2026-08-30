@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -197,6 +198,7 @@ def generate_data_models_doc(
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
+    start_t = time.time()
     reduced_types_summary = hierarchical_reduce_summaries(
         types_raw,
         "Type Definitions",
@@ -249,6 +251,9 @@ Structure the Markdown as follows:
             raise LLMError(f"Failed to generate data models document: {e}") from e
         content = "# Data Structure Design & Data Models\n\n## 1. Design Intent & Core Philosophy\nProvides core data structure definitions.\n"
 
+    elapsed = time.time() - start_t
+    print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/design/data_models.md")
+
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
         db.save_design_cache(cache_key, input_hash, content)
@@ -283,6 +288,7 @@ def generate_execution_model_doc(
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
+    start_t = time.time()
     reduced_funcs_summary = hierarchical_reduce_summaries(
         funcs_raw,
         "Function Call Structures",
@@ -325,6 +331,9 @@ Structure the Markdown as follows:
             raise LLMError(f"Failed to generate execution model document: {e}") from e
         content = "# System Execution Model & Runtime Architecture\n\n## 1. Design Intent & Execution Paradigm\nProvides system execution flow.\n"
 
+    elapsed = time.time() - start_t
+    print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/design/execution_model.md")
+
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
         db.save_design_cache(cache_key, input_hash, content)
@@ -359,6 +368,7 @@ def generate_module_docs(
                 module_summaries[mod_name] = cached_content
                 continue
 
+        start_t = time.time()
         reduced_module_elements = hierarchical_reduce_summaries(
             doc_lines,
             f"Module `{mod_name}` Elements",
@@ -402,6 +412,9 @@ Structure the Markdown as follows:
                 raise LLMError(f"Failed to generate module `{mod_name}` document: {e}") from e
             content = f"# Module Design: `{mod_name}`\n\n## 1. Design Intent & Responsibilities\nProvides capabilities for `{mod_name}`.\n"
 
+        elapsed = time.time() - start_t
+        print(f"         -> [Done in {elapsed:5.1f}s]: .docgen/design/modules/{mod_name}.md")
+
         write_flushed_text(out_file, content.strip() + "\n")
         if db:
             db.save_design_cache(cache_key, input_hash, content)
@@ -440,6 +453,7 @@ def generate_overview_doc(
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
+    start_t = time.time()
     reduced_modules_overview = hierarchical_reduce_summaries(
         mod_lines,
         "All Modules Overview",
@@ -477,6 +491,9 @@ Requirements:
         if not allow_fallback:
             raise LLMError(f"Failed to generate overview document: {e}") from e
         content = "# System Architecture Overview\n\n## 1. Architectural Overview & Design Philosophy\nProvides overall system architectural design.\n"
+
+    elapsed = time.time() - start_t
+    print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/design/overview.md")
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:

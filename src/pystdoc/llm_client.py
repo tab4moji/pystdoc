@@ -42,7 +42,7 @@ class LLMClient:
         token: Optional[str] = None,
         api_key: Optional[str] = None,
         context_size: int = 16384,
-        timeout: int = 180,
+        timeout: int = 60,
     ):
         raw_host = host or base_url or os.environ.get("LLM_HOST") or os.environ.get("OPENAI_BASE_URL")
         self.user_specified_host = raw_host is not None
@@ -50,7 +50,7 @@ class LLMClient:
         self.model = model or os.environ.get("LLM_MODEL", "gemma4-26b-a4b")
         self.token = token or api_key or os.environ.get("LLM_TOKEN") or os.environ.get("OPENAI_API_KEY")
         self.context_size = context_size or int(os.environ.get("LLM_CONTEXT_SIZE", "16384"))
-        self.timeout = timeout
+        self.default_timeout = timeout
 
         self.ensure_reachable()
 
@@ -118,14 +118,23 @@ class LLMClient:
         """Verify server connectivity."""
         return self.ensure_reachable()
 
-    def chat_completion(self, messages: List[Dict[str, str]], json_mode: bool = False, max_retries: int = 3) -> str:
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        json_mode: bool = False,
+        max_tokens: int = 1024,
+        timeout: Optional[int] = None,
+        max_retries: int = 2,
+    ) -> str:
         """Execute chat completion request with retry loop, token authentication, and context size limits."""
         url = f"{self.base_url}/chat/completions"
+        req_timeout = timeout or self.default_timeout
+
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.2,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
             "options": {
                 "num_ctx": self.context_size,
             },
@@ -142,7 +151,7 @@ class LLMClient:
                 req.add_header("Authorization", f"Bearer {self.token}")
 
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                with urllib.request.urlopen(req, timeout=req_timeout) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
                     return res_data["choices"][0]["message"]["content"]
             except urllib.error.HTTPError as he:
@@ -153,16 +162,15 @@ class LLMClient:
                     pass
                 detail = f": {err_body}" if err_body else ""
                 last_error = f"HTTP Error {he.code}: {he.reason}{detail}"
-                # If 404 (e.g. model not found), don't retry in vain
                 if he.code == 404:
                     break
                 if attempt < max_retries:
-                    time.sleep(1.5 * attempt)
+                    time.sleep(1.0 * attempt)
                     continue
             except Exception as e:
                 last_error = str(e)
                 if attempt < max_retries:
-                    time.sleep(1.5 * attempt)
+                    time.sleep(1.0 * attempt)
                     continue
 
         raise LLMError(f"LLM API call failed ({url}, model={self.model}): {last_error}")
@@ -181,9 +189,10 @@ class LLMClient:
         language: str = "English",
         allow_fallback: bool = False,
     ) -> Dict[str, str]:
-        """Generate explanations for a symbol in JSON format in the requested natural language."""
-        prompt = f"""Please analyze the following {lang} symbol `{name}` ({kind}) and output its design intent and technical specifications in JSON format.
+        """Generate concise explanations for a symbol in JSON format in the requested natural language."""
+        prompt = f"""Please analyze the following {lang} symbol `{name}` ({kind}) and output concise design intent and specifications in JSON format.
 Output Language: {language} (Write all text values in {language}).
+Be concise and avoid repetition.
 
 ### Signature / Type:
 `{signature}`
@@ -204,12 +213,12 @@ Output Language: {language} (Write all text values in {language}).
 {code}
 ```
 
-Return ONLY a valid JSON object matching this schema (all string values in {language}):
+Return ONLY a valid JSON object (all string values in {language}):
 {{
-  "purpose": "Core design intent and fundamental purpose of this symbol (1-2 sentences)",
-  "inputs": "Meaning, constraints, or pre-conditions of input arguments",
-  "outputs": "Meaning of return value or side effects / state mutations",
-  "overview": "Clear human-readable summary of the implementation and lifecycle (2-4 sentences)"
+  "purpose": "Core design intent and purpose (1-2 concise sentences)",
+  "inputs": "Input parameters description (or None)",
+  "outputs": "Return value or side effects description",
+  "overview": "Concise summary of implementation and role (1-3 sentences)"
 }}
 """
         messages = [
@@ -218,7 +227,7 @@ Return ONLY a valid JSON object matching this schema (all string values in {lang
         ]
 
         try:
-            raw_res = self.chat_completion(messages, json_mode=True)
+            raw_res = self.chat_completion(messages, json_mode=True, max_tokens=768, timeout=60)
             m = re.search(r"\{[\s\S]*\}", raw_res)
             if m:
                 return json.loads(m.group(0))
@@ -253,6 +262,7 @@ Return ONLY a valid JSON object matching this schema (all string values in {lang
 
         prompt = f"""Please analyze the following {lang} variable/field `{var_name}` in the context of the caller/parent functions that reference it.
 Output Language: {language} (Write all text in {language}).
+Be concise and avoid repetition.
 
 ### Variable: `{var_name}` ({var_kind})
 - Signature/Type: `{var_signature}`
@@ -260,7 +270,7 @@ Output Language: {language} (Write all text in {language}).
 ### Referencing Caller Functions:
 {chr(10).join(context_lines)}
 
-Return ONLY a valid JSON object matching this schema (all string values in {language}):
+Return ONLY a valid JSON object (all string values in {language}):
 {{
   "significance": "Essential significance and design rationale in context of callers (1-2 sentences)",
   "usage_scenario": "Data passing lifecycle and state management role across parent functions (1-2 sentences)",
@@ -273,7 +283,7 @@ Return ONLY a valid JSON object matching this schema (all string values in {lang
         ]
 
         try:
-            raw_res = self.chat_completion(messages, json_mode=True)
+            raw_res = self.chat_completion(messages, json_mode=True, max_tokens=768, timeout=60)
             m = re.search(r"\{[\s\S]*\}", raw_res)
             if m:
                 return json.loads(m.group(0))
