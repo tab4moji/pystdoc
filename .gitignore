@@ -1,14 +1,22 @@
-# ==========================================
-# Bytecode & Egg Info
-# ==========================================
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
-dist/
+*.so
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
 .eggs/
-.pytest_cache/
-.mypy_cache/
-.venv/
-venv/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.docgen/
+.venv

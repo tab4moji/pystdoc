@@ -7,8 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add pystdoc package root to sys.path
+_pkg_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_pkg_dir / "src"))
 
 from pystdoc.db import DocgenDB
 from pystdoc.design_engine import (
