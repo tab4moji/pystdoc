@@ -11,6 +11,7 @@ from pystdoc.parser_python import parse_python_file
 from pystdoc.llm_client import LLMClient, normalize_host_url
 from pystdoc.engine import run_docgen
 from pystdoc.db import DocgenDB
+from pystdoc.doc_writer import format_symbol_section
 from pystdoc.compilation_db import CompilationDatabase
 from pystdoc.call_graph import (
     flatten_symbols,
@@ -150,7 +151,8 @@ class TestDocgen(unittest.TestCase):
         doc_en = (
             self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("## 1. Top-Down Architectural Context & Role", doc_en)
+        self.assertIn("## 1. Basic Information", doc_en)
+        self.assertIn("Executes `add` operations.", doc_en)
 
         # Japanese option
         res_ja = run_docgen(
@@ -164,7 +166,8 @@ class TestDocgen(unittest.TestCase):
         doc_ja = (
             self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("## 1. Top-Down Architectural Context & Role", doc_ja)
+        self.assertIn("## 1. Basic Information", doc_ja)
+        self.assertIn("`add` の処理を実行する。", doc_ja)
 
     def test_llm_client_host_and_token(self):
         self.assertEqual(
@@ -184,6 +187,36 @@ class TestDocgen(unittest.TestCase):
         )
         self.assertEqual(client.token, "sk-test-token")
         self.assertEqual(client.context_size, 8192)
+
+    def test_format_symbol_section_top_down_context_for_functions(self):
+        # 1. Function with explicit top_down_context
+        sym_with_role = Symbol(
+            name="compute_kernel",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            top_down_context="高速な行列演算を実行する計算コア。",
+        )
+        dummy_file = self.src_dir / "math.c"
+        dummy_file.write_text("void compute_kernel() {}\n", encoding="utf-8")
+        out_ja = format_symbol_section(
+            sym_with_role, dummy_file, level=1, language="Japanese"
+        )
+        self.assertIn("高速な行列演算を実行する計算コア。", out_ja)
+
+        # 2. Main function without explicit top_down_context (fallback)
+        sym_main = Symbol(
+            name="main",
+            kind="function",
+            line_start=6,
+            line_end=10,
+        )
+        out_main = format_symbol_section(
+            sym_main, dummy_file, level=1, language="Japanese"
+        )
+        self.assertIn("プログラムの最上位エントリーポイント", out_main)
+        self.assertNotIn("上位モジュールから利用される main の設計要素",
+                         out_main)
 
 
 if __name__ == "__main__":

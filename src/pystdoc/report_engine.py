@@ -73,10 +73,16 @@ def generate_readme_doc(
     )
     mod_links_str = "\n".join(module_links) if module_links else "  - (None)"
 
-    prompt = f"""Please synthesize an executive README (.docgen/README.md)
-in {norm_lang}.
-Output Language: {norm_lang} (Write all explanation text in {norm_lang}).
-Goal: **"What does this project do, and what value does it provide?"**
+    sys_msg = (
+        "You are an objective senior code analyst and technical writer. "
+        "Strictly prohibit marketing fluff, promotional buzzwords, or "
+        "exaggerated praise (e.g. avoid 'mathematical rigor', 'robust', "
+        "'flexible', 'next-gen', 'cutting-edge'). Report purely objective "
+        f"facts derived directly from code in concise, plain {norm_lang}."
+    )
+
+    turn1_prompt = f"""We are analyzing a codebase. Below are excerpts
+from architectural models and module summaries.
 
 ### Architecture Overview (Excerpt):
 {overview_text[:800]}
@@ -90,49 +96,69 @@ Goal: **"What does this project do, and what value does it provide?"**
 ### Modules Overview:
 {modules_snippet_str}
 
-Structure the Markdown as follows:
-# Project Overview & Executive Summary
-
-## 1. What Does This Project Do? (Purpose & Value Proposition)
-(Explain clearly in 3-5 sentences: what system does and why it exists)
-
-## 2. Core Features & Capabilities
-(Bullet points of primary capabilities and exposed interfaces)
-
-## 3. System Architecture Summary
-(Concise summary of data flow, layers, and how modules cooperate)
-
-## 4. Documentation Navigation (Detailed Design Links)
-- [**Architecture Overview (Overview)**](design/overview.md)
-- [**Data Models & Structures (Data Models)**](design/data_models.md)
-- [**Execution Model & Runtime (Execution Model)**](design/execution_model.md)
-- **Module Design Documents**:
-{mod_links_str}
-- [**Symbol & Source Code Index**](documents/)
+Answer these 3 factual questions objectively in {norm_lang} (no buzzwords):
+1. **Project Category & Language**: What kind of software is this, and what
+   is its concrete role? (e.g. C CLI tool for hashing, Python SDK for API,
+   C++ matrix math routines, minimal prototype, etc.)
+2. **Implementation Status & Scale**: What is the factual state of the code?
+   (e.g. Small prototype/study, full-featured CLI, work-in-progress library)
+3. **Core Essence (1 Fact-Based Sentence)**: In plain, everyday terms,
+   what does it actually do with inputs and outputs?
 """
 
-    sys_msg = (
-        "You are an executive technical writer and principal architect. "
-        f"Write clear human-friendly documentation in {norm_lang}."
+    turn2_prompt = (
+        f"Based on the above facts, answer in {norm_lang} (no fluff):\n"
+        "1. **Concrete Usage & Execution**: Provide a realistic command-line\n"
+        "   or API call example based directly on the entry points.\n"
+        "2. **Input and Output Data**: Specifically what input data format\n"
+        "   is accepted, and what concrete output is produced?\n"
     )
-    messages = [
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": prompt},
-    ]
+
+    turn3_prompt = (
+        "Synthesize a concise, fact-based executive README "
+        f"(.docgen/README.md) in {norm_lang}.\n"
+        f"Output Language: {norm_lang} (Write all text in {norm_lang}).\n"
+        "Tone rule: Strictly objective and concise. No promotional words.\n\n"
+        "Structure the Markdown exactly as follows:\n"
+        "# Project Overview & Executive Summary\n\n"
+        "## 1. What Does This Project Do? (Purpose & Category)\n"
+        "(Factual 2-3 sentence summary: tool type, state, and function)\n\n"
+        "## 2. Typical Usage & Execution Example\n"
+        "(Concrete CLI command or API usage example with input/output)\n\n"
+        "## 3. Core Features & Capabilities\n"
+        "(Concise bullet points of implemented features and interfaces)\n\n"
+        "## 4. How It Works (High-Level Architecture Story)\n"
+        "(Concise factual narrative of internal data flow between modules)\n\n"
+        "## 5. Documentation Navigation (Detailed Design Links)\n"
+        "- [**Architecture Overview (Overview)**](design/overview.md)\n"
+        "- [**Data Models & Structures (Data Models)**]"
+        "(design/data_models.md)\n"
+        "- [**Execution Model & Runtime (Execution Model)**]"
+        "(design/execution_model.md)\n"
+        "- **Module Design Documents**:\n"
+        f"{mod_links_str}\n"
+        "- [**Symbol & Source Code Index**](documents/)\n"
+    )
 
     default_readme = f"""# Project Overview & Executive Summary
 
-## 1. What Does This Project Do? (Purpose & Value Proposition)
-This project provides high-precision source code analysis and documentation.
+## 1. What Does This Project Do? (Purpose & Category)
+This project provides automated high-precision source code analysis.
 
-## 2. Core Features & Capabilities
-- **Codebase Analysis**: Deep symbol extraction for multiple languages.
+## 2. Typical Usage & Execution Example
+```bash
+pystdoc --dir ./target_project/ --language {norm_lang}
+```
+
+## 3. Core Features & Capabilities
+- **Codebase Analysis**: Deep symbol extraction (C/C++, Python, Shell).
 - **Design Document Synthesis**: Automated synthesis of Data Models, etc.
 
-## 3. System Architecture Summary
-Organized as a multi-pass AST and LLM Map-Reduce processing pipeline.
+## 4. How It Works (High-Level Architecture Story)
+Analyzes code structure using AST and call graphs, then synthesizes
+hierarchical documentation through multi-turn LLM reasoning.
 
-## 4. Documentation Navigation (Detailed Design Links)
+## 5. Documentation Navigation (Detailed Design Links)
 - [**Architecture Overview (Overview)**](design/overview.md)
 - [**Data Models & Structures (Data Models)**](design/data_models.md)
 - [**Execution Model & Runtime (Execution Model)**](design/execution_model.md)
@@ -143,7 +169,32 @@ Organized as a multi-pass AST and LLM Map-Reduce processing pipeline.
 
     try:
         if llm_client:
-            content = llm_client.chat_completion(messages)
+            # Turn 1: Project classification and essence
+            msg1 = [
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": turn1_prompt},
+            ]
+            ans1 = llm_client.chat_completion(msg1)
+
+            # Turn 2: Typical usage and execution flow
+            msg2 = [
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": turn1_prompt},
+                {"role": "assistant", "content": ans1},
+                {"role": "user", "content": turn2_prompt},
+            ]
+            ans2 = llm_client.chat_completion(msg2)
+
+            # Turn 3: Final executive README synthesis
+            msg3 = [
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": turn1_prompt},
+                {"role": "assistant", "content": ans1},
+                {"role": "user", "content": turn2_prompt},
+                {"role": "assistant", "content": ans2},
+                {"role": "user", "content": turn3_prompt},
+            ]
+            content = llm_client.chat_completion(msg3)
         else:
             content = default_readme
     except Exception as e:
@@ -152,9 +203,9 @@ Organized as a multi-pass AST and LLM Map-Reduce processing pipeline.
                 f"Failed to generate README document: {e}"
             ) from e
         content = (
-            f"# Project Overview\n\n## 1. Purpose\n"
+            f"# Project Overview\n\n## 1. Purpose & Category\n"
             f"Provides project documentation.\n\n"
-            f"## 4. Navigation\n{mod_links_str}\n"
+            f"## 5. Navigation\n{mod_links_str}\n"
         )
 
     out_file = docgen_dir / "README.md"

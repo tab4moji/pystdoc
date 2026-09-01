@@ -89,58 +89,133 @@ def format_symbol_section(
     snippet = get_code_snippet(file_path, sym.line_start, sym.line_end)
     lang_id = get_code_language(file_path.suffix)
 
-    default_purpose = (
-        f"`{sym.name}` の処理を実行する。"
-        if is_ja
-        else f"Executes `{sym.name}` operations."
-    )
-    default_top_down = (
-        f"- **役割**: 上位モジュールから利用される `{sym.name}` の設計要素。\n"
-        "- **データフロー**: 要求された演算または状態遷移を実行する。"
-        if is_ja
-        else f"- **Role**: Architectural element of `{sym.name}` utilized "
-        "by callers and parent components.\n- **Data Flow**: Accepts inputs "
-        "and performs state mutation or computation."
+    kind_lower = sym.kind.lower()
+    if "var" in kind_lower:
+        default_purpose = (
+            f"`{sym.name}` の状態データを保持する。"
+            if is_ja
+            else f"Holds state data for `{sym.name}`."
+        )
+        data_flow_desc = (
+            "参照元関数から読み書きされ、状態を伝達します。"
+            if is_ja
+            else "It is read and written by referencing functions "
+            "to share state."
+        )
+    elif "enum" in kind_lower or "const" in kind_lower:
+        default_purpose = (
+            f"`{sym.name}` の識別定数値を定義する。"
+            if is_ja
+            else f"Defines constant identifier `{sym.name}`."
+        )
+        data_flow_desc = (
+            "条件判定やステータスコードとして参照されます。"
+            if is_ja
+            else "It is referenced in conditional logic and "
+            "status checks."
+        )
+    elif (
+        "struct" in kind_lower
+        or "class" in kind_lower
+        or "type" in kind_lower
+    ):
+        default_purpose = (
+            f"`{sym.name}` のデータ構造／モデルを定義する。"
+            if is_ja
+            else f"Defines data model for `{sym.name}`."
+        )
+        data_flow_desc = (
+            "関数の引数・戻り値やメンバアクセスでデータを受け渡します。"
+            if is_ja
+            else "It is passed via function arguments, returns, "
+            "or member access."
+        )
+    else:
+        default_purpose = (
+            f"`{sym.name}` の処理を実行する。"
+            if is_ja
+            else f"Executes `{sym.name}` operations."
+        )
+        data_flow_desc = (
+            "入力パラメータを受け取り、処理結果を返します。"
+            if is_ja
+            else "It accepts parameters and returns computed results."
+        )
+
+    role_desc = sym.top_down_context or sym.purpose or default_purpose
+
+    # Build pure prose description (Top-Down context + Bottom-Up overview)
+    prose_sentences = [role_desc.rstrip("。.") + ("。" if is_ja else ".")]
+
+    if sym.referencing_functions:
+        callers_str = (
+            "、".join(sym.referencing_functions)
+            if is_ja
+            else ", ".join(sym.referencing_functions)
+        )
+        if is_ja:
+            prose_sentences.append(
+                f"上位モジュールからは、{callers_str} などの目的で利用・参照されます。"
+            )
+        else:
+            prose_sentences.append(
+                f"In the system architecture, it is referenced by "
+                f"{callers_str}."
+            )
+    elif sym.name in ("main", "app", "cli", "run"):
+        if is_ja:
+            prose_sentences.append(
+                "プログラムの最上位エントリーポイント（起動・全体統括）として"
+                "位置付けられています。"
+            )
+        else:
+            prose_sentences.append(
+                "It serves as the root entry point (system bootstrap and "
+                "dispatcher)."
+            )
+
+    prose_sentences.append(
+        data_flow_desc.rstrip("。.") + ("。" if is_ja else ".")
     )
 
-    top_down_text = sym.top_down_context or default_top_down
-    bottom_up_purpose = sym.purpose or default_purpose
+    if (
+        sym.overview
+        and sym.overview != sym.purpose
+        and sym.overview != role_desc
+    ):
+        if is_ja:
+            prose_sentences.append(f"実装面では、{sym.overview}")
+        else:
+            prose_sentences.append(
+                f"Implementation overview: {sym.overview}"
+            )
+
+    prose_paragraph = " ".join(prose_sentences)
 
     lines = [
         f"{h_prefix} {sym.kind.capitalize()} Documentation: `{sym.name}`",
         "",
-        "## 1. Top-Down Architectural Context & Role",
-        top_down_text,
+        prose_paragraph,
         "",
-        "## 2. Bottom-Up Implementation Specifications",
-        f"- **Core Purpose**: {bottom_up_purpose}",
+        "## 1. Basic Information",
+        f"- **Name**: `{sym.name}`",
+        f"- **FQDN**: `{sym.fqdn or sym.name}`",
+        f"- **Symbol Kind**: `{kind_display}`",
+        f"- **Location**: Line {sym.line_start} to Line {sym.line_end}",
     ]
-    if sym.overview:
-        lines.append(f"- **Implementation Overview**: {sym.overview}")
-
-    lines.extend(
-        [
-            "",
-            "## 3. Basic Information",
-            f"- **Name**: `{sym.name}`",
-            f"- **FQDN**: `{sym.fqdn or sym.name}`",
-            f"- **Symbol Kind**: `{kind_display}`",
-            f"- **Location**: Line {sym.line_start} to Line {sym.line_end}",
-        ]
-    )
     if sym.signature:
         lines.append(f"- **Signature / Type**: `{sym.signature}`")
 
     if sym.parameters:
-        lines.extend(["", "## 4. Parameters"])
+        lines.extend(["", "## 2. Parameters"])
         for p in sym.parameters:
             p_type = f": `{p.type_hint}`" if p.type_hint else ""
             lines.append(f"- `{p.name}`{p_type}")
     else:
-        lines.extend(["", "## 4. Parameters", "- None"])
+        lines.extend(["", "## 2. Parameters", "- None"])
 
     if sym.return_type or sym.outputs_note or sym.inputs_note:
-        lines.extend(["", "## 5. Input / Return Specifications"])
+        lines.extend(["", "## 3. Input / Return Specifications"])
         if sym.inputs_note:
             lines.append(f"- Input Constraints: {sym.inputs_note}")
         lines.append(f"- Return Type: `{sym.return_type or 'void / None'}`")
@@ -148,17 +223,24 @@ def format_symbol_section(
             lines.append(f"- Return Value & Side Effects: {sym.outputs_note}")
 
     if sym.callees:
-        lines.extend(["", "## 6. Called Functions"])
+        lines.extend(["", "## 4. Called Functions"])
         for c in sym.callees:
             lines.append(f"- `{c}`")
     elif sym.referencing_functions:
-        lines.extend(["", "## 6. Referencing Functions"])
+        lines.extend(["", "## 4. Referencing Functions"])
         for r in sym.referencing_functions:
             lines.append(f"- {r}")
 
     if snippet:
-        lines.extend(["", "## Source Code Snippet",
-                     f"```{lang_id}", snippet, "```"])
+        lines.extend(
+            [
+                "",
+                "## Source Code Snippet",
+                f"```{lang_id}",
+                snippet,
+                "```",
+            ]
+        )
 
     if sym.children:
         lines.append("")

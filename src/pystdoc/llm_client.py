@@ -43,7 +43,6 @@ def normalize_llm_json_dict(data: Dict[str, Any]) -> Dict[str, str]:
         "意図",
         "description",
         "target",
-        "role",
         "機能",
     ):
         if k in data and data[k]:
@@ -73,8 +72,9 @@ def normalize_llm_json_dict(data: Dict[str, Any]) -> Dict[str, str]:
             normalized["overview"] = str(data[k]).strip()
             break
 
-    for k in ("significance", "重要性", "役割", "意義", "role"):
+    for k in ("role", "役割", "significance", "重要性", "意義"):
         if k in data and data[k]:
+            normalized["role"] = str(data[k]).strip()
             normalized["significance"] = str(data[k]).strip()
             break
 
@@ -327,6 +327,7 @@ Be concise and avoid repetition.
 
 Return ONLY a valid JSON object matching these keys:
 {{
+  "role": "What this does for caller in 1 concise sentence in {language}",
   "purpose": "Core design intent and purpose in {language}",
   "inputs": "Input parameters description",
   "outputs": "Return value or side effects description",
@@ -355,6 +356,11 @@ Return ONLY a valid JSON object matching these keys:
                 ) from e
             is_ja = language in ("Japanese", "日本語")
             return {
+                "role": (
+                    f"プログラムの `{name}` 処理を実行する。"
+                    if is_ja
+                    else f"Executes `{name}` operations."
+                ),
                 "purpose": f"`{name}` の処理を実行する。"
                 if is_ja
                 else f"Executes `{name}` operations.",
@@ -388,22 +394,22 @@ Return ONLY a valid JSON object matching these keys:
                 context_lines.append(f"  Overview: {f['overview']}")
 
         ctx_str = "\n".join(context_lines)
-        prompt = f"""Please analyze {lang} variable `{var_name}`
-in the context of callers.
+        prompt = f"""Please analyze {lang} {var_kind} `{var_name}`
+based on how referencing caller functions actually access and mutate it.
 Output Language: {language} (Write all text in {language}).
-Be concise and avoid repetition.
+Tone rule: Strictly objective and concise. No promotional buzzwords.
 
 ### Variable: `{var_name}` ({var_kind})
 - Signature/Type: `{var_signature}`
 
-### Referencing Caller Functions:
+### Referencing Caller Functions & Purposes:
 {ctx_str}
 
 Return ONLY a valid JSON object:
 {{
-  "significance": "Essential significance in {language}",
-  "usage_scenario": "Data passing lifecycle in {language}",
-  "top_down_summary": "Overall design summary in {language}"
+  "role": "Held data and why callers access it in {language}",
+  "usage_scenario": "Which functions update or read this data in {language}",
+  "top_down_summary": "Concise factual summary in {language}"
 }}
 """
         sys_msg = (

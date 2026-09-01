@@ -340,6 +340,24 @@ class TestCoverageBoost(unittest.TestCase):
         doc_ja = generate_static_symbol_doc(sym_type, "Japanese")
         self.assertIn("エイリアス", doc_ja["purpose"])
 
+        # Test struct
+        sym_struct = Symbol(
+            name="Point", kind="struct", line_start=1, line_end=5
+        )
+        doc_struct_en = generate_static_symbol_doc(sym_struct, "English")
+        self.assertIn("data model", doc_struct_en["purpose"].lower())
+        doc_struct_ja = generate_static_symbol_doc(sym_struct, "Japanese")
+        self.assertIn("データモデル", doc_struct_ja["purpose"])
+
+        # Test var
+        sym_var = Symbol(
+            name="g_count", kind="variable", line_start=1, line_end=1
+        )
+        doc_var_en = generate_static_symbol_doc(sym_var, "English")
+        self.assertIn("state data", doc_var_en["purpose"].lower())
+        doc_var_ja = generate_static_symbol_doc(sym_var, "Japanese")
+        self.assertIn("状態データ", doc_var_ja["purpose"])
+
         sym_custom = Symbol(
             name="CustomSym",
             kind="unknown_kind",

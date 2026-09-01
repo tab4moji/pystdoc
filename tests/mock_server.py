@@ -42,6 +42,7 @@ class MockLLMHandler(BaseHTTPRequestHandler):
             resp_text = "Here is broken result { invalid json"
         elif "json" in req_body.lower() or "inputs_note" in req_body.lower():
             resp_text = json.dumps({
+                "role": "Main computation unit.",
                 "purpose": "Executes core computation task.",
                 "overview": (
                     "Performs fast arithmetic and updates global total."

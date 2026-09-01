@@ -73,30 +73,31 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
     is_ja = lang_norm in ("Japanese", "日本語")
     kind = sym.kind.lower()
 
-    if "enum" in kind or kind == "enum_constant":
+    if "enum" in kind or kind == "enum_constant" or "const" in kind:
         if is_ja:
             return {
                 "purpose": (
                     f"状態コードまたは識別子定数 `{sym.name}` を定義する"
-                    "列挙型要素。"
+                    "列挙型・定数要素。"
                 ),
                 "inputs": "なし（定数定義）。",
                 "outputs": f"`{sym.signature or sym.name}` の定数識別値。",
                 "overview": (
-                    "システム全体で一貫したステータス管理や条件判定に使用される "
-                    f"`{sym.name}` の定義。"
+                    "ステータス管理や条件分岐で各関数から参照される"
+                    f"列挙型・定数 `{sym.name}` の定義。"
                 ),
             }
         else:
             return {
                 "purpose": (
-                    f"Defines status code or constant `{sym.name}`."
+                    "Defines status code, constant, or enumeration "
+                    f"`{sym.name}`."
                 ),
                 "inputs": "None (constant definition).",
                 "outputs": f"Constant `{sym.signature or sym.name}`.",
                 "overview": (
-                    "Enumeration definition used for status handling "
-                    "and conditional flow across the system."
+                    "Enumeration and constant definition used for status "
+                    "handling and conditional flow across modules."
                 ),
             }
     elif "typedef" in kind or "type" in kind:
@@ -118,6 +119,56 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
                 "overview": (
                     "Specification of data structure or type alias "
                     f"`{sym.name}` used across modules."
+                ),
+            }
+    elif "struct" in kind or "class" in kind:
+        if is_ja:
+            return {
+                "purpose": (
+                    f"データモデルまたは構造 `{sym.name}` の定義。"
+                ),
+                "inputs": "メンバ変数の初期化・設定。",
+                "outputs": f"`{sym.signature or sym.name}` の構造体データ。",
+                "overview": (
+                    "複数のデータ項目を集約して各モジュール間で受け渡すための "
+                    f"`{sym.name}` の定義。"
+                ),
+            }
+        else:
+            return {
+                "purpose": (
+                    f"Defines data model or structure `{sym.name}`."
+                ),
+                "inputs": "Member field initialization.",
+                "outputs": f"Data structure `{sym.signature or sym.name}`.",
+                "overview": (
+                    "Encapsulates structured data fields for inter-module "
+                    f"passing as `{sym.name}`."
+                ),
+            }
+    elif "var" in kind:
+        if is_ja:
+            return {
+                "purpose": (
+                    f"`{sym.name}` の状態データを保持する変数定義。"
+                ),
+                "inputs": "代入される値。",
+                "outputs": "保持される状態値。",
+                "overview": (
+                    "各処理関数から参照・更新される共有状態 "
+                    f"`{sym.name}` のデータ領域。"
+                ),
+            }
+        else:
+            return {
+                "purpose": (
+                    f"Holds state data for variable `{sym.name}`."
+                ),
+                "inputs": "Assigned value.",
+                "outputs": "Retained state value.",
+                "overview": (
+                    "Shared state data storage accessed and updated "
+                    f"by processing functions as `{sym.name}`."
                 ),
             }
 
@@ -409,6 +460,8 @@ def run_docgen(
                     sym.outputs_note = explanation["outputs"]
                 if explanation.get("overview"):
                     sym.overview = explanation["overview"]
+                if explanation.get("role"):
+                    sym.top_down_context = explanation["role"]
 
                 save_payload = {
                     "purpose": sym.purpose,
@@ -563,23 +616,13 @@ def run_docgen(
                 )
                 var_elapsed = time.time() - start_var_time
 
-                lines = []
-                if top_down_res.get("significance"):
-                    lines.append(
-                        f"- **Role in Callers**: "
-                        f"{top_down_res['significance']}"
-                    )
-                if top_down_res.get("usage_scenario"):
-                    lines.append(
-                        f"- **Data Flow & Usage Scenario**: "
-                        f"{top_down_res['usage_scenario']}"
-                    )
-                if top_down_res.get("top_down_summary"):
-                    lines.append(
-                        f"- **Summary**: {top_down_res['top_down_summary']}"
-                    )
-
-                v_sym.top_down_context = "\n".join(lines)
+                v_role = (
+                    top_down_res.get("role")
+                    or top_down_res.get("significance")
+                    or top_down_res.get("top_down_summary")
+                )
+                if v_role:
+                    v_sym.top_down_context = v_role
 
                 save_payload = {
                     "purpose": v_sym.purpose,
@@ -644,7 +687,28 @@ def run_docgen(
                         db.close()
                         return 1
 
-        # 5. Flush all documentation
+        # 5. Flush all documentation with caller usage purposes
+        id_to_node_map = {n.unique_id: n for n in all_symbol_nodes}
+        for n in all_symbol_nodes:
+            if n.direct_caller_ids:
+                caller_info_list = []
+                for c_id in sorted(list(n.direct_caller_ids)):
+                    if c_id in id_to_node_map:
+                        c_node = id_to_node_map[c_id]
+                        c_purpose = c_node.symbol.purpose or ""
+                        c_rel = c_node.rel_path.name
+                        if c_purpose:
+                            caller_info_list.append(
+                                f"`{c_node.symbol.name}` (`{c_rel}`): "
+                                f"{c_purpose}"
+                            )
+                        else:
+                            caller_info_list.append(
+                                f"`{c_node.symbol.name}` (`{c_rel}`)"
+                            )
+                if caller_info_list:
+                    n.symbol.referencing_functions = caller_info_list
+
         total_individual_docs = 0
         for rel_path in matched_files:
             symbols = file_symbols[rel_path]

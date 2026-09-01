@@ -34,44 +34,40 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
     if m_title:
         data["title"] = m_title.group(1).strip()
 
-    # 1. Extract Top-Down Context if present
-    m_top_down = re.search(
-        r"## 1\..*Top-Down.*\n([\s\S]*?)(?=\n## 2\.|\Z)", text, re.IGNORECASE
-    )
-    if m_top_down:
-        data["context"] = m_top_down.group(1).strip()
-
-    # 2. Extract Bottom-Up Purpose (from new layout or legacy layout)
-    m_purpose_new = re.search(r"- \*\*Core Purpose\*\*:\s*([^\n]+)", text)
-    if m_purpose_new:
-        data["purpose"] = m_purpose_new.group(1).strip()
+    # 1. Extract Top-Down / Bottom-Up prose from the top or fallback
+    m_prose = re.search(r"^# [^\n]+\n+([^#\s][\s\S]*?)(?=\n## |\Z)", text)
+    if m_prose and m_prose.group(1).strip():
+        data["context"] = m_prose.group(1).strip()
+        data["purpose"] = data["context"]
     else:
-        m_purpose_legacy = re.search(
-            r"## 1\..*(?:Design Intent|Purpose).*\n([\s\S]*?)(?=\n## 2\.|\Z)",
+        m_legacy = re.search(
+            r"## 1\..*\n([\s\S]*?)(?=\n## 2\.|\Z)",
             text,
         )
-        if m_purpose_legacy and not m_top_down:
-            data["purpose"] = m_purpose_legacy.group(1).strip()
-        elif m_top_down:
+        if m_legacy:
+            data["context"] = m_legacy.group(1).strip()
             data["purpose"] = data["context"]
 
-    # 3. Extract Kind & Signature
+    # 2. Extract Kind & Signature
     m_kind = re.search(
         r"- \*\*(?:Symbol Kind|Kind)[^*]*\*\*:\s*`?([^`\n]+)`?",
         text,
         re.IGNORECASE,
     )
     if m_kind:
-        data["kind"] = m_kind.group(1).strip().split()[0]
+        data["kind"] = m_kind.group(1).strip()
+
     m_sig = re.search(
-        r"- \*\*(?:Signature|Type)[^*]*\*\*:\s*`([^`]+)`", text, re.IGNORECASE
+        r"- \*\*(?:Signature|Type)[^*]*\*\*:\s*`?([^`\n]+)`?",
+        text,
+        re.IGNORECASE,
     )
     if m_sig:
         data["signature"] = m_sig.group(1).strip()
 
-    # 4. Extract Callees & References (section 5 or 6)
+    # 3. Extract Callees & Referencing Functions
     m_callees = re.search(
-        r"## [56]\..*(?:Called Functions|Callees).*\n([\s\S]*?)(?=\n## |\Z)",
+        r"## \d+\..*Called Functions.*\n([\s\S]*?)(?=\n## |\Z)",
         text,
         re.IGNORECASE,
     )
@@ -82,7 +78,7 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
         ]
 
     m_refs = re.search(
-        r"## [56]\..*(?:Referencing Functions|References).*\n"
+        r"## \d+\..*(?:Referencing Functions|References).*\n"
         r"([\s\S]*?)(?=\n## |\Z)",
         text,
         re.IGNORECASE,

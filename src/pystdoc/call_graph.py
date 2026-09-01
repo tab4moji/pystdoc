@@ -17,6 +17,7 @@ class SymbolNode:
     unique_id: str
     fqdn: str = ""
     direct_callee_ids: Set[str] = field(default_factory=set)
+    direct_caller_ids: Set[str] = field(default_factory=set)
     scc_group_ids: List[str] = field(default_factory=list)
     dag_level: int = 0
 
@@ -61,24 +62,29 @@ def flatten_symbols(
 
 
 def link_variables_to_functions(nodes: List[SymbolNode]) -> None:
-    """Detect functions referencing each variable using FQDN/scope."""
+    """Detect functions referencing variables/consts/types using scope/text."""
     fn_nodes = [n for n in nodes if get_kind_prefix(n.symbol.kind) == "fn"]
-    var_nodes = [n for n in nodes if get_kind_prefix(n.symbol.kind) == "var"]
+    target_nodes = [
+        n
+        for n in nodes
+        if get_kind_prefix(n.symbol.kind) in ("var", "const", "type")
+    ]
 
-    for v_node in var_nodes:
-        v_name = v_node.symbol.name
+    for t_node in target_nodes:
+        t_name = t_node.symbol.name
         ref_funcs: Set[str] = set()
 
         for f_node in fn_nodes:
-            if f_node.rel_path == v_node.rel_path:
+            if f_node.rel_path == t_node.rel_path:
                 if (
                     f_node.symbol.line_start
-                    <= v_node.symbol.line_start
+                    <= t_node.symbol.line_start
                     <= f_node.symbol.line_end
                 ):
                     ref_funcs.add(
                         f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)"
                     )
+                    t_node.direct_caller_ids.add(f_node.unique_id)
                     continue
 
             try:
@@ -89,14 +95,15 @@ def link_variables_to_functions(nodes: List[SymbolNode]) -> None:
                 end = min(len(code_lines), f_node.symbol.line_end)
                 func_code = "\n".join(code_lines[start:end])
 
-                if re.search(rf"\b{re.escape(v_name)}\b", func_code):
+                if re.search(rf"\b{re.escape(t_name)}\b", func_code):
                     ref_funcs.add(
                         f"`{f_node.symbol.name}` (`{f_node.rel_path.name}`)"
                     )
+                    t_node.direct_caller_ids.add(f_node.unique_id)
             except Exception:
                 pass
 
-        v_node.symbol.referencing_functions = sorted(list(ref_funcs))
+        t_node.symbol.referencing_functions = sorted(list(ref_funcs))
 
 
 def tarjan_scc(
@@ -181,6 +188,9 @@ def order_symbols_by_levels(
                     if target_id != node.unique_id and is_fn:
                         caller_to_callees[node.unique_id].add(target_id)
                         node.direct_callee_ids.add(target_id)
+                        id_to_node[target_id].direct_caller_ids.add(
+                            node.unique_id
+                        )
 
     base_types_and_vars = [
         n
