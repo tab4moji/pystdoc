@@ -91,6 +91,11 @@ docgen --dir ./my_project/ -j 4
 designgen --dir ./my_project/
 ```
 
+#### 4. Practical Real-World Example (Dedicated Remote LLM Server)
+```bash
+pystdoc --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-26b-a4b --language 日本語
+```
+
 ---
 
 ## ⚙️ CLI Options
