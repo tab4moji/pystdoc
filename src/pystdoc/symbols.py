@@ -15,7 +15,7 @@ def get_kind_prefix(kind: str) -> str:
         "destructor",
     ):
         return "fn"
-    elif kind_lower in ("variable", "field", "var"):
+    elif kind_lower in ("variable", "var"):
         return "var"
     elif kind_lower in (
         "struct",
@@ -24,6 +24,8 @@ def get_kind_prefix(kind: str) -> str:
         "typedef",
         "type_alias",
         "type",
+        "field",
+        "member",
     ):
         return "type"
     elif kind_lower in ("enum_constant", "constant", "macro", "const"):

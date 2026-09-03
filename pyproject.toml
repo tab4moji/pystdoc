@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pystdoc"
-version = "0.5.5"
+version = "0.5.7"
 description = "Python Structural & Topological Documentation Engine (pystdoc): High-precision, LLM-powered hierarchical codebase and architecture documentation generator."
 readme = "README.md"
 authors = [
@@ -34,6 +34,11 @@ pystdoc = "pystdoc.cli:reportgen_main"
 reportgen = "pystdoc.cli:reportgen_main"
 docgen = "pystdoc.cli:docgen_main"
 designgen = "pystdoc.cli:designgen_main"
+
+[project.urls]
+Homepage = "https://github.com/tab4moji/pystdoc"
+Repository = "https://github.com/tab4moji/pystdoc"
+Issues = "https://github.com/tab4moji/pystdoc/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

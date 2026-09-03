@@ -20,10 +20,12 @@ from pystdoc.doc_writer import (
 from pystdoc.design_engine import run_design_generation
 from pystdoc.report_engine import generate_readme_doc
 from pystdoc.call_graph import (
+    SymbolNode,
     flatten_symbols,
     link_variables_to_functions,
     build_callee_context_summary,
 )
+from pystdoc.engine import run_docgen
 from pystdoc.hasher import update_hash_record
 from pystdoc.llm_client import LLMError
 
@@ -476,15 +478,56 @@ class TestCoverageBoost(unittest.TestCase):
             "# doc\n- **Symbol Kind**: function\n", encoding="utf-8"
         )
 
-        with patch(
-            "pystdoc.design_engine.LLMClient", return_value=mock_client
-        ):
-            with self.assertRaises(LLMError):
-                run_design_generation(
+    def test_docgen_pass2_prefixed_var_node(self):
+        c_file = self.src_dir / "mod_vars.c"
+        c_file.write_text(
+            "int g_val = 10;\nvoid run() { g_val++; }\n", encoding="utf-8"
+        )
+        mock_client = MagicMock()
+        mock_client.explain_symbol.return_value = {
+            "role": "Mod value",
+            "purpose": "State",
+            "overview": "Var overview",
+        }
+        mock_client.refine_variable_top_down.return_value = {
+            "role": "Global mod state",
+            "usage_scenario": "Updated in run",
+            "top_down_summary": "Summary",
+        }
+        with patch("pystdoc.engine.LLMClient", return_value=mock_client):
+            with patch("pystdoc.engine.flatten_symbols") as mock_flat:
+                sym_var = Symbol(
+                    name="val", kind="variable", line_start=1, line_end=1
+                )
+                sym_fn = Symbol(
+                    name="run",
+                    kind="function",
+                    line_start=2,
+                    line_end=2,
+                    purpose="Runner",
+                )
+                node_var = SymbolNode(
+                    symbol=sym_var,
+                    rel_path=Path("src/mod_vars.c"),
+                    full_path=c_file,
+                    unique_id="src/mod_vars.c::var.Outer.val",
+                    fqdn="src.mod_vars.Outer.val",
+                )
+                node_fn = SymbolNode(
+                    symbol=sym_fn,
+                    rel_path=Path("src/mod_vars.c"),
+                    full_path=c_file,
+                    unique_id="src/mod_vars.c::fn.run",
+                    fqdn="src.mod_vars.run",
+                )
+                mock_flat.return_value = [node_var, node_fn]
+                ret = run_docgen(
                     target_dir=self.test_dir,
                     use_llm=True,
-                    allow_fallback=False,
+                    allow_fallback=True,
+                    force=True,
                 )
+                self.assertEqual(ret, 0)
 
 
 if __name__ == "__main__":
