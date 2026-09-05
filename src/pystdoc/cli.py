@@ -3,15 +3,23 @@
 import argparse
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 import pystdoc
-from pystdoc.engine import run_docgen
+from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
-from pystdoc.report_engine import generate_readme_doc
+from pystdoc.engine import run_docgen
 from pystdoc.llm_client import LLMClient
+from pystdoc.query import (
+    run_description,
+    run_functions,
+    run_list,
+    run_variables,
+)
+from pystdoc.report_engine import generate_readme_doc
 
 
-def docgen_main() -> None:
+def docgen_main(argv: Optional[List[str]] = None) -> None:
     """CLI entry point for `docgen` command."""
     parser = argparse.ArgumentParser(
         description="Source code symbol document generator (docgen)"
@@ -84,7 +92,7 @@ def docgen_main() -> None:
         help="Number of parallel LLM workers (default: 1)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     sys.exit(
         run_docgen(
             target_dir=Path(args.dir),
@@ -104,7 +112,7 @@ def docgen_main() -> None:
     )
 
 
-def designgen_main() -> None:
+def designgen_main(argv: Optional[List[str]] = None) -> None:
     """CLI entry point for `designgen` command."""
     parser = argparse.ArgumentParser(
         description="Architecture and system design generator (designgen)"
@@ -165,7 +173,7 @@ def designgen_main() -> None:
         help="Allow fallback to static template on LLM failure",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     sys.exit(
         run_design_generation(
             target_dir=Path(args.dir),
@@ -183,8 +191,106 @@ def designgen_main() -> None:
     )
 
 
-def reportgen_main() -> None:
+def reportgen_main(argv: Optional[List[str]] = None) -> None:
     """CLI entry point for `reportgen` and `pystdoc` commands."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    sync_cmds = {"sync"}
+    list_cmds = {"list", "ls"}
+    fn_cmds = {"functions", "func", "fn", "funcs", "fns"}
+    var_cmds = {"variables", "var", "vars"}
+    desc_cmds = {"description", "desc"}
+
+    subcmd: Optional[str] = None
+    sub_args = list(argv)
+
+    if argv and not argv[0].startswith("-"):
+        first_arg = argv[0].lower()
+        if first_arg in sync_cmds:
+            subcmd = "sync"
+            sub_args = argv[1:]
+        elif first_arg in list_cmds:
+            subcmd = "list"
+            sub_args = argv[1:]
+        elif first_arg in fn_cmds:
+            subcmd = "functions"
+            sub_args = argv[1:]
+        elif first_arg in var_cmds:
+            subcmd = "variables"
+            sub_args = argv[1:]
+        elif first_arg in desc_cmds:
+            subcmd = "description"
+            sub_args = argv[1:]
+
+    if subcmd == "list":
+        parser = argparse.ArgumentParser(
+            prog="pystdoc list", description="List indexed source code files"
+        )
+        parser.add_argument(
+            "dir_pos", nargs="?", default=None, help="Target directory"
+        )
+        parser.add_argument(
+            "--dir", default="./", help="Target project directory"
+        )
+        args = parser.parse_args(sub_args)
+        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
+        sys.exit(run_list(target.resolve()))
+
+    elif subcmd == "functions":
+        parser = argparse.ArgumentParser(
+            prog="pystdoc functions",
+            description="List indexed functions and methods",
+        )
+        parser.add_argument(
+            "dir_pos", nargs="?", default=None, help="Target directory"
+        )
+        parser.add_argument(
+            "--dir", default="./", help="Target project directory"
+        )
+        args = parser.parse_args(sub_args)
+        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
+        sys.exit(run_functions(target.resolve()))
+
+    elif subcmd == "variables":
+        parser = argparse.ArgumentParser(
+            prog="pystdoc variables",
+            description="List indexed variables and constants",
+        )
+        parser.add_argument(
+            "dir_pos", nargs="?", default=None, help="Target directory"
+        )
+        parser.add_argument(
+            "--dir", default="./", help="Target project directory"
+        )
+        args = parser.parse_args(sub_args)
+        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
+        sys.exit(run_variables(target.resolve()))
+
+    elif subcmd == "description":
+        parser = argparse.ArgumentParser(
+            prog="pystdoc description",
+            description="Show symbol description and location",
+        )
+        parser.add_argument(
+            "symbol", nargs="?", default=None, help="Symbol name or FQDN"
+        )
+        parser.add_argument(
+            "dir_pos", nargs="?", default=None, help="Target directory"
+        )
+        parser.add_argument(
+            "--dir", default="./", help="Target project directory"
+        )
+        args = parser.parse_args(sub_args)
+        if not args.symbol:
+            print(
+                "Error: Please specify a symbol name or FQDN.", file=sys.stderr
+            )
+            sys.exit(1)
+        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
+        sys.exit(run_description(target.resolve(), args.symbol))
+
+    # Default / sync: Run unified documentation pipeline
     parser = argparse.ArgumentParser(
         description="Unified documentation orchestrator (reportgen / pystdoc)"
     )
@@ -261,7 +367,7 @@ def reportgen_main() -> None:
         "--skip-designgen", action="store_true", help="Skip designgen step"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(sub_args)
     target_dir = Path(args.dir).resolve()
 
     if not target_dir.exists() or not target_dir.is_dir():
@@ -347,11 +453,16 @@ def reportgen_main() -> None:
             )
             sys.exit(1)
 
+    db_path = target_dir / ".docgen" / "index.db"
+    db = DocgenDB(db_path) if db_path.exists() else None
+
     generate_readme_doc(
         target_dir=target_dir,
         llm_client=llm_client,
         language=args.language,
+        force=args.force,
         allow_fallback=args.allow_fallback,
+        db=db,
     )
 
     out_readme = target_dir / ".docgen" / "README.md"

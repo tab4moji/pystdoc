@@ -529,6 +529,718 @@ class TestCoverageBoost(unittest.TestCase):
                 )
                 self.assertEqual(ret, 0)
 
+    def test_adapter_coverage_boost(self):
+        from pystdoc.adapters.base import (
+            BaseLanguageAdapter,
+            LanguageAdapterRegistry,
+            build_fqdn,
+            calculate_block_end_line,
+            clean_docstring,
+        )
+        from pystdoc.adapters.clang_adapter import ClangAdapter
+        from pystdoc.adapters.generic_adapter import GenericAdapter
+        from pystdoc.adapters.java_adapter import (
+            _extract_java_callees,
+            _format_type,
+        )
+        from pystdoc.adapters.kotlin_adapter import (
+            _extract_preceding_doc,
+            _format_type_node,
+        )
+        from pystdoc.adapters.python_adapter import PythonAdapter
+        from pystdoc.parser_java import parse_java_file
+        from pystdoc.parser_kotlin import parse_kotlin_file
+        import javalang
+        import kopyt
+
+        # 1. BaseLanguageAdapter abstract methods
+        class MinimalAdapter(BaseLanguageAdapter):
+            @property
+            def name(self):
+                return "minimal"
+
+            @property
+            def supported_extensions(self):
+                return ()
+
+            @property
+            def default_code_language(self):
+                return "text"
+
+            def parse(self, file_path, comp_db=None, base_dir=None):
+                return []
+
+        min_ad = MinimalAdapter()
+        self.assertEqual(min_ad.name, "minimal")
+        self.assertEqual(min_ad.default_code_language, "text")
+
+        # 2. Registry fallback search
+        class WildcardAdapter(BaseLanguageAdapter):
+            @property
+            def name(self):
+                return "wildcard"
+
+            @property
+            def supported_extensions(self):
+                return ()
+
+            @property
+            def default_code_language(self):
+                return "wild"
+
+            def can_handle(self, file_path):
+                return file_path.name.endswith(".custom_ext")
+
+            def parse(self, file_path, comp_db=None, base_dir=None):
+                return []
+
+        reg = LanguageAdapterRegistry()
+        w_ad = WildcardAdapter()
+        reg.register(w_ad)
+        found = reg.get_adapter_for_file(Path("my_file.custom_ext"))
+        self.assertEqual(found, w_ad)
+
+        # 3. docstring & line calculation branches
+        doc_c = "/* Simple C comment */"
+        self.assertEqual(clean_docstring(doc_c), "Simple C comment")
+        doc_slash = "// Line 1\n// Line 2"
+        self.assertEqual(clean_docstring(doc_slash), "Line 1\nLine 2")
+
+        lines = [
+            "int a = 1; /* inline comment */ int b = 2;",
+            'String s = "\\"escaped\\"";',
+            "void foo() {",
+            "    if (true) {",
+            "    }",
+            "}",
+        ]
+        self.assertEqual(calculate_block_end_line(lines, 1), 1)
+        self.assertEqual(calculate_block_end_line(lines, 2), 2)
+        self.assertEqual(calculate_block_end_line(lines, 3), 6)
+        self.assertEqual(calculate_block_end_line(lines, 0), 1)
+
+        self.assertEqual(build_fqdn([], "test"), "test")
+        self.assertEqual(build_fqdn(["a"], "b"), "a.b")
+
+        # 4. Clang, Python, Generic properties
+        clang_ad = ClangAdapter()
+        self.assertEqual(clang_ad.name, "clang")
+        self.assertEqual(clang_ad.default_code_language, "c")
+
+        py_ad = PythonAdapter()
+        self.assertEqual(py_ad.name, "python")
+        self.assertEqual(py_ad.default_code_language, "python")
+
+        gen_ad = GenericAdapter()
+        self.assertEqual(gen_ad.name, "generic")
+        self.assertEqual(gen_ad.default_code_language, "bash")
+        self.assertEqual(gen_ad.get_code_language(".txt"), "text")
+        self.assertEqual(gen_ad.get_code_language(".sh"), "bash")
+        self.assertEqual(gen_ad.get_code_language(".rs"), "rust")
+
+        # 5. Java type and AST branches
+        class MockTypeArgNamed:
+            name = "NamedType"
+
+        class MockTypeArgStr:
+            def __str__(self):
+                return "StrType"
+
+        class MockTypeNodeWithArgs:
+            name = "CustomMap"
+            arguments = [MockTypeArgNamed(), MockTypeArgStr()]
+            dimensions = None
+            sub_type = None
+
+        self.assertEqual(
+            _format_type(MockTypeNodeWithArgs()),
+            "CustomMap<NamedType, StrType>",
+        )
+
+        class MockSubtype:
+            name = "Sub"
+            arguments = None
+            dimensions = None
+            sub_type = None
+
+        class MockTypeWithSub:
+            name = "Outer"
+            arguments = None
+            dimensions = None
+            sub_type = MockSubtype()
+
+        self.assertEqual(_format_type(MockTypeWithSub()), "Outer.Sub")
+
+        # ExplicitConstructorInvocation with qualifier
+        java_src_exp = """
+        class SuperBase {
+            class Inner {
+                Inner() {
+                    SuperBase.super();
+                }
+            }
+        }
+        """
+        tree_exp = javalang.parse.parse(java_src_exp)
+        inner_cls = tree_exp.types[0].body[0]
+        callees_exp = _extract_java_callees(inner_cls.constructors[0])
+        self.assertIn("SuperBase", callees_exp)
+
+        # Java Interface and Annotation declarations
+        java_iface_src = """package com.example;
+        public @interface MyAnno {}
+        interface MyIface { void run(); }
+        """
+        j_iface_file = self.test_dir / "Types.java"
+        j_iface_file.write_text(java_iface_src, encoding="utf-8")
+        iface_syms = parse_java_file(j_iface_file)
+        self.assertEqual(len(iface_syms), 2)
+        self.assertEqual(iface_syms[0].kind, "class")
+        self.assertEqual(iface_syms[1].kind, "class")
+
+        # 6. Kotlin branches
+        class MockTypeWrapper:
+            subtype = kopyt.node.NullableType(None, None, "?")
+
+        self.assertEqual(_format_type_node(MockTypeWrapper()), "Any?")
+
+        class MockNamedType:
+            name = "NamedKotlinType"
+
+        self.assertEqual(_format_type_node(MockNamedType()), "NamedKotlinType")
+
+        class MockArbitraryType:
+            def __str__(self):
+                return "ArbitraryTypeStr"
+
+        self.assertEqual(
+            _format_type_node(MockArbitraryType()), "ArbitraryTypeStr"
+        )
+
+        kt_preceding_lines = [
+            "/**",
+            " * Doc comment",
+            " */",
+            "@Anno1",
+            "@Anno2",
+            "fun annotatedFunc() {}",
+        ]
+        doc_extracted = _extract_preceding_doc(kt_preceding_lines, 6)
+        self.assertEqual(doc_extracted, "Doc comment")
+
+        # Kotlin package with sequence and header branches
+        kt_full = """package com.pkg.sub
+        class Outer {
+            object MyObj {
+                val prop: Int = 1
+            }
+        }
+        """
+        kt_full_file = self.test_dir / "Outer.kt"
+        kt_full_file.write_text(kt_full, encoding="utf-8")
+        kt_full_syms = parse_kotlin_file(kt_full_file)
+        self.assertEqual(len(kt_full_syms), 1)
+        self.assertEqual(kt_full_syms[0].children[0].kind, "class")
+
+        # Test Kotlin package header string fallback
+        class MockPackageHeader:
+            header = "package com.custom.pkg"
+            name = None
+            sequence = None
+
+        class MockTreeWithHeader:
+            package = MockPackageHeader()
+            declarations = []
+
+        with patch("kopyt.Parser.parse", return_value=MockTreeWithHeader()):
+            kt_hdr_file = self.test_dir / "Hdr.kt"
+            kt_hdr_file.write_text("fun dummy() {}", encoding="utf-8")
+            self.assertEqual(parse_kotlin_file(kt_hdr_file), [])
+
+        class MockPkgSeqItem:
+            value = "seqpkg"
+
+        class MockPkgSeq:
+            name = None
+            sequence = [MockPkgSeqItem()]
+
+        class MockTreeSeq:
+            package = MockPkgSeq()
+            declarations = []
+
+        with patch("kopyt.Parser.parse", return_value=MockTreeSeq()):
+            self.assertEqual(parse_kotlin_file(kt_hdr_file), [])
+
+        # Java this() and super() constructor calls
+        java_ctors_src = """package com.example;
+        class Base { Base() {} }
+        class Sub extends Base {
+            Sub() { super(); }
+            Sub(int x) { this(); }
+        }
+        """
+        j_ctor_file = self.test_dir / "Ctors.java"
+        j_ctor_file.write_text(java_ctors_src, encoding="utf-8")
+        ctor_syms = parse_java_file(j_ctor_file)
+        self.assertEqual(len(ctor_syms), 2)
+        sub_cls = ctor_syms[1]
+        sub_ctors = [c for c in sub_cls.children if c.kind == "constructor"]
+        self.assertEqual(len(sub_ctors), 2)
+        self.assertIn("super", sub_ctors[0].callees)
+        self.assertIn("this", sub_ctors[1].callees)
+
+        # Java field with missing decl position fallback
+        class MockDecl:
+            name = "x"
+            position = None
+
+        class MockField:
+            type = "int"
+            documentation = None
+            modifiers = []
+            declarators = [MockDecl()]
+            position = None
+
+        class MockClassDecl:
+            name = "FieldFallback"
+            position = None
+            documentation = None
+            modifiers = []
+            fields = [MockField()]
+            body = []
+
+        class MockJavaTree:
+            package = None
+            types = [MockClassDecl()]
+
+        with patch("javalang.parse.parse", return_value=MockJavaTree()):
+            j_mock_file = self.test_dir / "MockField.java"
+            j_mock_file.write_text("class FieldFallback {}", encoding="utf-8")
+            mock_syms = parse_java_file(j_mock_file)
+            self.assertEqual(len(mock_syms), 1)
+            self.assertEqual(len(mock_syms[0].children), 1)
+            self.assertEqual(mock_syms[0].children[0].name, "x")
+
+    def test_java_adapter_edge_cases(self):
+        from pystdoc.adapters.java_adapter import (
+            JavaAdapter,
+            _extract_java_callees,
+        )
+
+        adapter = JavaAdapter()
+
+        # Anonymous / empty name type decl
+        class MockEmptyType:
+            name = ""
+
+        res = adapter._parse_type_declaration(MockEmptyType(), [], ["pkg"])
+        self.assertIsNone(res)
+
+        # Explicit constructor invocation with qualifier
+        class MockExp:
+            qualifier = "Outer"
+
+        class MockNode:
+            def filter(self, target_type):
+                import javalang
+
+                if target_type == javalang.tree.ExplicitConstructorInvocation:
+                    return [(None, MockExp())]
+                return []
+
+        callees = _extract_java_callees(MockNode())
+        self.assertIn("Outer", callees)
+
+        # Field declarator with position
+        class MockPos:
+            line = 42
+
+        class MockDeclWithPos:
+            name = "y"
+            position = MockPos()
+
+        class MockFieldWithPos:
+            type = "String"
+            documentation = ""
+            modifiers = []
+            declarators = [MockDeclWithPos()]
+            position = None
+
+        class MockClassWithField:
+            name = "FieldPosClass"
+            position = MockPos()
+            documentation = ""
+            modifiers = []
+            fields = [MockFieldWithPos()]
+            body = []
+
+        cls_res = adapter._parse_type_declaration(
+            MockClassWithField(), [], ["pkg"]
+        )
+        self.assertEqual(len(cls_res.children), 1)
+        self.assertEqual(cls_res.children[0].line_start, 42)
+
+    def test_kotlin_adapter_edge_cases(self):
+        from pystdoc.adapters.kotlin_adapter import KotlinAdapter
+
+        adapter = KotlinAdapter()
+
+        # None decl
+        self.assertIsNone(adapter._parse_declaration(None, [], ["pkg"]))
+
+        # Unknown decl type returning None
+        class UnknownDecl:
+            pass
+
+        self.assertIsNone(
+            adapter._parse_declaration(UnknownDecl(), [], ["pkg"])
+        )
+
+        # Property without declaration or name
+        class MockPropNoDecl:
+            declaration = None
+
+        class MockPropEmptyName:
+            class MockInnerDecl:
+                name = ""
+
+            declaration = MockInnerDecl()
+
+        self.assertIsNone(
+            adapter._parse_property(MockPropNoDecl(), [], ["pkg"])
+        )
+        self.assertIsNone(
+            adapter._parse_property(MockPropEmptyName(), [], ["pkg"])
+        )
+
+        # List return in top level and class body
+        dummy_sym = Symbol(
+            name="dummy", kind="function", line_start=1, line_end=1
+        )
+        with patch.object(
+            adapter, "_parse_declaration", return_value=[dummy_sym]
+        ):
+            class MockTopTree:
+                declarations = [UnknownDecl()]
+
+            with patch("kopyt.Parser") as mock_parser_cls:
+                mock_parser_instance = mock_parser_cls.return_value
+                mock_parser_instance.parse.return_value = MockTopTree()
+                k_file = self.test_dir / "Edge.kt"
+                k_file.write_text("fun dummy() {}", encoding="utf-8")
+                syms = adapter.parse(k_file)
+                self.assertEqual(len(syms), 1)
+
+        # List return inside class body members
+        class MockClassBody:
+            members = [UnknownDecl()]
+            entries = []
+
+        class MockClassNode:
+            name = "TestList"
+            position = None
+            modifiers = []
+            constructor = None
+            body = MockClassBody()
+
+        with patch.object(
+            adapter,
+            "_parse_declaration",
+            side_effect=lambda decl, lines, stack: [dummy_sym]
+            if isinstance(decl, UnknownDecl)
+            else None,
+        ):
+            cls_sym = adapter._parse_class_like(MockClassNode(), [], ["pkg"])
+            self.assertEqual(len(cls_sym.children), 1)
+
+        # Kotlin companion object with keyword name and named companion object
+        import kopyt
+
+        class MockCompanionNode(kopyt.node.CompanionObject):
+            def __init__(self, name_val, mods=None):
+                self.name = name_val
+                self.modifiers = mods or []
+                self.position = None
+                self.body = None
+                self.interfaces = ()
+
+        comp_kw = adapter._parse_class_like(
+            MockCompanionNode("public", []), [], ["pkg"]
+        )
+        self.assertEqual(comp_kw.name, "Companion")
+        self.assertIn("public", comp_kw.signature)
+
+        comp_named = adapter._parse_class_like(
+            MockCompanionNode("Factory", []), [], ["pkg"]
+        )
+        self.assertEqual(comp_named.name, "Factory")
+        self.assertIn("companion object Factory", comp_named.signature)
+
+    def test_llm_client_retry_and_json_edge_cases(self):
+        import os
+        from pystdoc.llm_client import (
+            LLMClient,
+            extract_json_from_text,
+        )
+
+        # 1. extract_json_from_text edge cases
+        with self.assertRaises(ValueError):
+            extract_json_from_text("")
+        with self.assertRaises(ValueError):
+            extract_json_from_text("   ")
+        with self.assertRaises(ValueError):
+            extract_json_from_text("[1, 2, 3]")
+        with self.assertRaises(ValueError):
+            extract_json_from_text('"just a string"')
+
+        # 2. LLMClient default init without env
+        with patch.dict(os.environ, {}, clear=True):
+            with patch(
+                "pystdoc.llm_client.LLMClient.ensure_reachable",
+                return_value=True,
+            ):
+                default_client = LLMClient(host=None, base_url=None)
+                self.assertEqual(
+                    default_client.base_url, "http://localhost:11434/v1"
+                )
+
+        # 3. chat_completion empty response content retry & fail
+        with patch(
+            "pystdoc.llm_client.LLMClient.ensure_reachable", return_value=True
+        ):
+            c = LLMClient("http://localhost:11434")
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": ""}}]}
+        ).encode("utf-8")
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_resp
+        mock_cm.__exit__.return_value = None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(LLMError) as cm:
+                    c.chat_completion(
+                        [{"role": "user", "content": "hi"}], max_retries=2
+                    )
+                self.assertIn("empty response content", str(cm.exception))
+
+        # 4. explain_symbol and refine_variable retry with invalid json
+        call_count = [0]
+
+        def fake_chat(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return "Not a valid JSON at all"
+            return '{"purpose": "Recovered", "overview": "Ok"}'
+
+        with patch.object(c, "chat_completion", side_effect=fake_chat):
+            with patch("time.sleep", return_value=None):
+                res = c.explain_symbol(
+                    name="retry_fn",
+                    kind="function",
+                    code="void retry_fn() {}",
+                    signature="void retry_fn()",
+                    lang="C",
+                    callees=[],
+                    params=[],
+                    ret_type="void",
+                )
+                self.assertEqual(res["purpose"], "Recovered")
+
+        # 5. refine_variable_top_down retry and fallback
+        with patch.object(
+            c, "chat_completion", return_value="Invalid non-json response"
+        ):
+            with patch("time.sleep", return_value=None):
+                fb_res = c.refine_variable_top_down(
+                    var_name="v",
+                    var_kind="var",
+                    var_signature="int v",
+                    var_code="int v = 0;",
+                    parent_functions_info=[],
+                    lang="C",
+                    language="Japanese",
+                    allow_fallback=True,
+                    max_attempts=2,
+                )
+                self.assertIn("v", fb_res["significance"])
+
+                fb_res_en = c.refine_variable_top_down(
+                    var_name="v",
+                    var_kind="var",
+                    var_signature="int v",
+                    var_code="int v = 0;",
+                    parent_functions_info=[],
+                    lang="C",
+                    language="English",
+                    allow_fallback=True,
+                    parent_container_info={
+                        "name": "DataModel",
+                        "kind": "class",
+                        "purpose": "Holds data",
+                    },
+                    max_attempts=1,
+                )
+                self.assertIn("DataModel", fb_res_en["purpose"])
+
+                # Fallback without parent container in English
+                fb_res_en2 = c.refine_variable_top_down(
+                    var_name="g_val",
+                    var_kind="var",
+                    var_signature="int g_val",
+                    var_code="int g_val;",
+                    parent_functions_info=[],
+                    lang="C",
+                    language="English",
+                    allow_fallback=True,
+                    max_attempts=1,
+                )
+                self.assertIn("g_val", fb_res_en2["purpose"])
+
+    def test_static_symbol_doc_all_variations(self):
+        from pystdoc.engine import generate_static_symbol_doc
+        # Member / field with parent container
+        sym_field = Symbol(
+            name="logMessage",
+            kind="field",
+            line_start=1,
+            line_end=1,
+            signature="val logMessage: String",
+            fqdn="pkg.LogData.logMessage",
+        )
+        doc_field_ja = generate_static_symbol_doc(sym_field, "Japanese")
+        self.assertIn("LogData", doc_field_ja["purpose"])
+        self.assertIn("logMessage", doc_field_ja["purpose"])
+
+        doc_field_en = generate_static_symbol_doc(sym_field, "English")
+        self.assertIn("LogData", doc_field_en["purpose"])
+
+        # Member without parent FQDN
+        sym_field_noparent = Symbol(
+            name="count",
+            kind="member",
+            line_start=1,
+            line_end=1,
+            signature="int count",
+        )
+        doc_f_ja = generate_static_symbol_doc(sym_field_noparent, "Japanese")
+        self.assertIn("count", doc_f_ja["purpose"])
+        doc_f_en = generate_static_symbol_doc(sym_field_noparent, "English")
+        self.assertIn("count", doc_f_en["purpose"])
+
+        # Typedef
+        sym_type = Symbol(
+            name="MyType", kind="typedef", line_start=1, line_end=1
+        )
+        doc_t_ja = generate_static_symbol_doc(sym_type, "Japanese")
+        self.assertIn("MyType", doc_t_ja["purpose"])
+        doc_t_en = generate_static_symbol_doc(sym_type, "English")
+        self.assertIn("MyType", doc_t_en["purpose"])
+
+        # Struct / class
+        sym_struct = Symbol(
+            name="User", kind="struct", line_start=1, line_end=5
+        )
+        doc_s_ja = generate_static_symbol_doc(sym_struct, "Japanese")
+        self.assertIn("User", doc_s_ja["purpose"])
+        doc_s_en = generate_static_symbol_doc(sym_struct, "English")
+        self.assertIn("User", doc_s_en["purpose"])
+
+        # Generic symbol
+        sym_other = Symbol(
+            name="custom_sym", kind="unknown_kind", line_start=1, line_end=1
+        )
+        doc_o_ja = generate_static_symbol_doc(sym_other, "Japanese")
+        self.assertIn("custom_sym", doc_o_ja["purpose"])
+        doc_o_en = generate_static_symbol_doc(sym_other, "English")
+        self.assertIn("custom_sym", doc_o_en["purpose"])
+
+        # Enum with parent container
+        sym_enum = Symbol(
+            name="ACTIVE",
+            kind="enum_constant",
+            line_start=1,
+            line_end=1,
+            signature="ACTIVE = 1",
+            fqdn="pkg.State.ACTIVE",
+        )
+        doc_e_ja = generate_static_symbol_doc(sym_enum, "Japanese")
+        self.assertIn("State", doc_e_ja["purpose"])
+        doc_e_en = generate_static_symbol_doc(sym_enum, "English")
+        self.assertIn("State", doc_e_en["purpose"])
+
+    def test_pass2_refinement_full_coverage(self):
+        kt_file = self.src_dir / "Main.kt"
+        kt_file.write_text(
+            "class Container {\n"
+            "    val myField: String = \"test\"\n"
+            "    fun doAction() {\n"
+            "        println(myField)\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        mock_client = MagicMock()
+        mock_client.explain_symbol.return_value = {
+            "purpose": "Container purpose",
+            "inputs": "None",
+            "outputs": "Result",
+            "overview": "Container overview",
+            "role": "Container role",
+        }
+        mock_client.refine_variable_top_down.return_value = {
+            "role": "Field role",
+            "purpose": "Field purpose",
+            "overview": "Field overview",
+            "usage_scenario": "Field scenario",
+        }
+
+        with patch("pystdoc.engine.LLMClient", return_value=mock_client):
+            ret = run_docgen(
+                target_dir=self.test_dir,
+                use_llm=True,
+                host="http://localhost:11434",
+                concurrency=1,
+                language="Japanese",
+                force=True,
+            )
+            self.assertEqual(ret, 0)
+
+    def test_sanitize_architectural_context(self):
+        from pystdoc.llm_client import sanitize_architectural_context
+        # None and empty
+        self.assertEqual(
+            sanitize_architectural_context(None, "fallback"), "fallback"
+        )
+        self.assertEqual(
+            sanitize_architectural_context("", "fallback"), "fallback"
+        )
+
+        # Persona self-identifications
+        self.assertEqual(
+            sanitize_architectural_context("ソフトウェアアーキテクト", "fb"),
+            "fb",
+        )
+        self.assertEqual(
+            sanitize_architectural_context("Software Architect", "fb"),
+            "fb",
+        )
+        self.assertEqual(
+            sanitize_architectural_context(
+                "principal software architect", "fb"
+            ),
+            "fb",
+        )
+
+        # Legitimate architectural context
+        valid_ctx = "ViewModelの破棄時にリソースの解放を行う。"
+        self.assertEqual(
+            sanitize_architectural_context(valid_ctx, "fb"), valid_ctx
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,13 +100,19 @@ def normalize_llm_json_dict(data: Dict[str, Any]) -> Dict[str, str]:
 
 def extract_json_from_text(raw_text: str) -> Dict[str, Any]:
     """Robustly extract and parse JSON object from LLM response text."""
+    if not raw_text or not raw_text.strip():
+        raise ValueError("Empty response text cannot be parsed as JSON")
+
     clean = raw_text.strip()
     # 1. Try markdown code block extraction
     m_code = re.search(
-        r"```(?:json)?\s*([\s\S]*?)\s*```", clean, re.IGNORECASE)
+        r"```(?:json)?\s*([\s\S]*?)\s*```", clean, re.IGNORECASE
+    )
     if m_code:
         try:
-            return json.loads(m_code.group(1).strip())
+            res = json.loads(m_code.group(1).strip())
+            if isinstance(res, dict):
+                return res
         except Exception:
             pass
 
@@ -114,16 +120,41 @@ def extract_json_from_text(raw_text: str) -> Dict[str, Any]:
     m_brace = re.search(r"\{[\s\S]*\}", clean)
     if m_brace:
         try:
-            return json.loads(m_brace.group(0).strip())
+            res = json.loads(m_brace.group(0).strip())
+            if isinstance(res, dict):
+                return res
         except Exception:
             pass
 
-    # 3. Direct parse
-    return json.loads(clean)
+    # 3. Direct parse (for valid non-dict JSON primitives)
+    res = json.loads(clean)
+    raise ValueError(f"Extracted JSON is not a dictionary: {type(res)}")
+
+
+def sanitize_architectural_context(
+    text: Optional[str], fallback_text: str = ""
+) -> str:
+    """Filter out accidental LLM persona self-identification."""
+    if not text:
+        return fallback_text
+    cleaned = text.strip()
+    persona_tokens = {
+        "ソフトウェアアーキテクト",
+        "ソフトウェア・アーキテクト",
+        "アーキテクト",
+        "software architect",
+        "principal software architect",
+        "principal architect",
+        "ai assistant",
+        "assistant",
+    }
+    if cleaned.lower() in persona_tokens or cleaned in persona_tokens:
+        return fallback_text
+    return cleaned
 
 
 class LLMClient:
-    """OpenAI-compatible client with standard configuration."""
+    """OpenAI-compatible LLM client with multi-step fallback."""
 
     def __init__(
         self,
@@ -132,17 +163,25 @@ class LLMClient:
         model: str = "gemma4-26b-a4b",
         token: Optional[str] = None,
         api_key: Optional[str] = None,
-        context_size: int = 16384,
+        context_size: Optional[int] = None,
         timeout: int = 60,
     ):
-        raw_host = (
-            host
-            or base_url
-            or os.environ.get("LLM_HOST")
-            or os.environ.get("OPENAI_BASE_URL")
+        self.user_specified_host = bool(
+            host or base_url or os.environ.get("LLM_HOST")
         )
-        self.user_specified_host = raw_host is not None
-        self.base_url = normalize_host_url(raw_host)
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        else:
+            resolved_host = (
+                host or os.environ.get("LLM_HOST") or "localhost:11434"
+            )
+            if not resolved_host.startswith("http://") and \
+               not resolved_host.startswith("https://"):
+                resolved_host = f"http://{resolved_host}"
+            if not resolved_host.endswith("/v1"):
+                resolved_host = f"{resolved_host.rstrip('/')}/v1"
+            self.base_url = resolved_host
+
         self.model = model or os.environ.get("LLM_MODEL", "gemma4-26b-a4b")
         self.token = (
             token
@@ -231,28 +270,36 @@ class LLMClient:
         json_mode: bool = False,
         max_tokens: int = 1024,
         timeout: Optional[int] = None,
-        max_retries: int = 2,
+        max_retries: int = 3,
+        temperature: float = 0.2,
+        seed: Optional[int] = None,
     ) -> str:
-        """Execute chat completion request with retry loop."""
+        """Execute chat completion request with retry and dynamic seed loop."""
         url = f"{self.base_url}/chat/completions"
         req_timeout = timeout or self.default_timeout
-
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
-            "options": {
-                "num_ctx": self.context_size,
-            },
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
-        data = json.dumps(payload).encode("utf-8")
+        base_seed = seed if seed is not None else 42
 
         last_error = None
         for attempt in range(1, max_retries + 1):
+            current_seed = base_seed + (attempt - 1) * 17
+            current_temp = min(0.7, temperature + (attempt - 1) * 0.1)
+
+            payload: Dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": current_temp,
+                "max_tokens": max_tokens,
+                "seed": current_seed,
+                "options": {
+                    "num_ctx": self.context_size,
+                    "seed": current_seed,
+                    "temperature": current_temp,
+                },
+            }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+
+            data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(
                 url, data=data, headers={"Content-Type": "application/json"}
             )
@@ -262,7 +309,13 @@ class LLMClient:
             try:
                 with urllib.request.urlopen(req, timeout=req_timeout) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
-                    return res_data["choices"][0]["message"]["content"]
+                    content = res_data["choices"][0]["message"]["content"]
+                    if content and content.strip():
+                        return content
+                    last_error = "Received empty response content from LLM"
+                    if attempt < max_retries:
+                        time.sleep(1.0 * attempt)
+                        continue
             except urllib.error.HTTPError as he:
                 err_body = ""
                 try:
@@ -299,8 +352,9 @@ class LLMClient:
         callee_context: str = "",
         language: str = "English",
         allow_fallback: bool = False,
+        max_attempts: int = 3,
     ) -> Dict[str, str]:
-        """Generate concise explanations for a symbol in JSON format."""
+        """Generate concise explanations for a symbol in JSON with retry."""
         prompt = f"""Please analyze {lang} symbol `{name}` ({kind})
 and output concise design intent and specifications in JSON format.
 Output Language: {language} (Write all explanation text in {language}).
@@ -327,7 +381,7 @@ Be concise and avoid repetition.
 
 Return ONLY a valid JSON object matching these keys:
 {{
-  "role": "What this does for caller in 1 concise sentence in {language}",
+  "architectural_context": "How `{name}` serves caller modules in {language}",
   "purpose": "Core design intent and purpose in {language}",
   "inputs": "Input parameters description",
   "outputs": "Return value or side effects description",
@@ -335,7 +389,7 @@ Return ONLY a valid JSON object matching these keys:
 }}
 """
         sys_msg = (
-            f"You are a principal software architect. "
+            f"You are a principal software architect analyzing code symbols. "
             f"You output ONLY valid JSON in {language}."
         )
         messages = [
@@ -343,35 +397,63 @@ Return ONLY a valid JSON object matching these keys:
             {"role": "user", "content": prompt},
         ]
 
-        try:
-            raw_res = self.chat_completion(
-                messages, json_mode=False, max_tokens=768, timeout=60
-            )
-            parsed = extract_json_from_text(raw_res)
-            return normalize_llm_json_dict(parsed)
-        except Exception as e:
-            if not allow_fallback:
-                raise LLMError(
-                    f"Failed to analyze symbol `{name}`: {e}"
-                ) from e
-            is_ja = language in ("Japanese", "日本語")
-            return {
-                "role": (
-                    f"プログラムの `{name}` 処理を実行する。"
-                    if is_ja
-                    else f"Executes `{name}` operations."
-                ),
-                "purpose": f"`{name}` の処理を実行する。"
-                if is_ja
-                else f"Executes `{name}` operations.",
-                "inputs": "パラメータを受け取る。"
-                if is_ja
-                else "Accepts input parameters.",
-                "outputs": "結果値を返す。" if is_ja else "Returns result.",
-                "overview": f"`{name}` の基本処理。"
-                if is_ja
-                else f"Basic operation for `{name}`.",
-            }
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                raw_res = self.chat_completion(
+                    messages,
+                    json_mode=False,
+                    max_tokens=768,
+                    timeout=60,
+                    max_retries=1,
+                    seed=42 + (attempt - 1) * 100,
+                    temperature=0.15 + (attempt - 1) * 0.1,
+                )
+                parsed = extract_json_from_text(raw_res)
+                norm = normalize_llm_json_dict(parsed)
+                raw_arch = (
+                    norm.get("architectural_context")
+                    or norm.get("role")
+                )
+                clean_arch = sanitize_architectural_context(
+                    raw_arch, fallback_text=norm.get("purpose", "")
+                )
+                norm["architectural_context"] = clean_arch
+                norm["role"] = clean_arch
+                return norm
+            except Exception as e:
+                last_exc = e
+                if attempt < max_attempts:
+                    time.sleep(0.5 * attempt)
+                    continue
+
+        if not allow_fallback:
+            raise LLMError(
+                f"Failed to analyze symbol `{name}`: {last_exc}"
+            ) from last_exc
+        is_ja = language in ("Japanese", "日本語")
+        fallback_role = (
+            f"プログラムの `{name}` 処理を実行する。"
+            if is_ja
+            else f"Executes `{name}` operations."
+        )
+        fallback_purpose = (
+            f"`{name}` の処理を実行する。"
+            if is_ja
+            else f"Executes `{name}` operations."
+        )
+        return {
+            "architectural_context": fallback_role,
+            "role": fallback_role,
+            "purpose": fallback_purpose,
+            "inputs": "パラメータを受け取る。"
+            if is_ja
+            else "Accepts input parameters.",
+            "outputs": "結果値を返す。" if is_ja else "Returns result.",
+            "overview": f"`{name}` の基本処理。"
+            if is_ja
+            else f"Basic operation for `{name}`.",
+        }
 
     def refine_variable_top_down(
         self,
@@ -383,37 +465,50 @@ Return ONLY a valid JSON object matching these keys:
         lang: str,
         language: str = "English",
         allow_fallback: bool = False,
+        parent_container_info: Optional[Dict[str, str]] = None,
+        max_attempts: int = 3,
     ) -> Dict[str, str]:
-        """Refine variable significance using top-down context."""
+        """Refine variable significance using top-down context with retry."""
         context_lines = []
+        if parent_container_info:
+            c_name = parent_container_info.get("name", "")
+            c_kind = parent_container_info.get("kind", "data model")
+            c_purp = parent_container_info.get("purpose", "")
+            c_line = f"- Parent Container/Model: `{c_name}` ({c_kind})"
+            if c_purp:
+                c_line += f" - Purpose: {c_purp}"
+            context_lines.append(c_line)
+
         for f in parent_functions_info:
             context_lines.append(
-                f"- Function `{f['name']}` ({f['file']}): {f['purpose']}"
+                f"- Referencing Function `{f['name']}` ({f.get('file', '')}): "
+                f"{f.get('purpose', '')}"
             )
             if f.get("overview"):
                 context_lines.append(f"  Overview: {f['overview']}")
 
-        ctx_str = "\n".join(context_lines)
+        ctx_str = "\n".join(context_lines) if context_lines else "None"
         prompt = f"""Please analyze {lang} {var_kind} `{var_name}`
-based on how referencing caller functions actually access and mutate it.
+based on its parent data model/class and referencing caller functions.
 Output Language: {language} (Write all text in {language}).
 Tone rule: Strictly objective and concise. No promotional buzzwords.
 
-### Variable: `{var_name}` ({var_kind})
-- Signature/Type: `{var_signature}`
+### Target Symbol: `{var_name}` ({var_kind})
+- Signature/Type: `{var_signature or var_name}`
 
-### Referencing Caller Functions & Purposes:
+### Architectural & Caller Context:
 {ctx_str}
 
 Return ONLY a valid JSON object:
 {{
-  "role": "Held data and why callers access it in {language}",
-  "usage_scenario": "Which functions update or read this data in {language}",
-  "top_down_summary": "Concise factual summary in {language}"
+  "architectural_context": "Architectural role of `{var_name}` in {language}",
+  "purpose": "Precise functional purpose of `{var_name}` in {language}",
+  "overview": "Detailed overview of `{var_name}` in {language}",
+  "usage_scenario": "Data flow across modules in {language}"
 }}
 """
         sys_msg = (
-            f"You are a principal software architect. "
+            f"You are a principal software architect analyzing code symbols. "
             f"You output ONLY valid JSON in {language}."
         )
         messages = [
@@ -421,27 +516,103 @@ Return ONLY a valid JSON object:
             {"role": "user", "content": prompt},
         ]
 
-        try:
-            raw_res = self.chat_completion(
-                messages, json_mode=False, max_tokens=768, timeout=60
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                raw_res = self.chat_completion(
+                    messages,
+                    json_mode=False,
+                    max_tokens=768,
+                    timeout=60,
+                    max_retries=1,
+                    seed=42 + (attempt - 1) * 100,
+                    temperature=0.15 + (attempt - 1) * 0.1,
+                )
+                parsed = extract_json_from_text(raw_res)
+                norm = normalize_llm_json_dict(parsed)
+                raw_arch = (
+                    norm.get("architectural_context")
+                    or norm.get("role")
+                    or norm.get("significance")
+                    or norm.get("top_down_summary")
+                )
+                clean_arch = sanitize_architectural_context(
+                    raw_arch, fallback_text=norm.get("purpose", "")
+                )
+                norm["architectural_context"] = clean_arch
+                norm["role"] = clean_arch
+                norm["significance"] = clean_arch
+                return norm
+            except Exception as e:
+                last_exc = e
+                if attempt < max_attempts:
+                    time.sleep(0.5 * attempt)
+                    continue
+
+        if not allow_fallback:
+            raise LLMError(
+                f"Failed top-down variable refinement for "
+                f"`{var_name}`: {last_exc}"
+            ) from last_exc
+        is_ja = language in ("Japanese", "日本語")
+        p_name = (
+            parent_container_info.get("name") if parent_container_info else ""
+        )
+        sig_val = var_signature or var_kind
+        if p_name:
+            role = (
+                f"「{p_name}」における `{var_name}` のデータ保持および連携。"
+                if is_ja
+                else f"Maintains `{var_name}` data in `{p_name}`."
             )
-            parsed = extract_json_from_text(raw_res)
-            return normalize_llm_json_dict(parsed)
-        except Exception as e:
-            if not allow_fallback:
-                raise LLMError(
-                    f"Failed top-down variable refinement for "
-                    f"`{var_name}`: {e}"
-                ) from e
-            is_ja = language in ("Japanese", "日本語")
-            return {
-                "significance": f"`{var_name}` は呼び出し元で使用される状態/データ。"
+            purpose = (
+                f"データモデル「{p_name}」において、`{var_name}` "
+                f"({sig_val}) の値を保持・伝達する。"
                 if is_ja
-                else f"`{var_name}` is a state/data utilized by callers.",
-                "usage_scenario": "呼び出し元関数間で受け渡される。"
+                else (
+                    f"Holds and passes `{var_name}` ({sig_val}) "
+                    f"within `{p_name}`."
+                )
+            )
+            overview = (
+                f"「{p_name}」のプロパティとして、関連処理関数における"
+                f"状態管理やモジュール間データ受渡しに使用されます。"
                 if is_ja
-                else "Passed and transformed across calling functions.",
-                "top_down_summary": f"`{var_name}` の設計概要。"
+                else (
+                    f"Utilized as a property of `{p_name}` for state "
+                    "management and inter-module data transfer."
+                )
+            )
+        else:
+            role = (
+                f"呼び出し元やモジュールで使用される `{var_name}` の状態/データ。"
                 if is_ja
-                else f"Design summary for `{var_name}`.",
-            }
+                else f"`{var_name}` is a state/data utilized by callers."
+            )
+            purpose = (
+                f"`{var_name}` ({sig_val}) の状態データを保持する。"
+                if is_ja
+                else f"Holds state data for `{var_name}` ({sig_val})."
+            )
+            overview = (
+                "関連する各処理関数から参照・更新され、"
+                "処理状態や設定データを伝達します。"
+                if is_ja
+                else (
+                    "Referenced and updated across related processing "
+                    "functions to communicate state data."
+                )
+            )
+
+        return {
+            "role": role,
+            "significance": role,
+            "purpose": purpose,
+            "overview": overview,
+            "usage_scenario": (
+                "呼び出し元関数間で受け渡される。"
+                if is_ja
+                else "Passed and transformed across calling functions."
+            ),
+            "top_down_summary": overview,
+        }

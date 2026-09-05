@@ -3,12 +3,31 @@
 from pathlib import Path
 from typing import List, Optional
 
+from pystdoc.adapters import get_default_registry
 from pystdoc.cache import write_flushed_text
 from pystdoc.compilation_db import CompilationDatabase
 from pystdoc.parser_clang import parse_clang_file
 from pystdoc.parser_generic import parse_generic_file
+from pystdoc.parser_java import parse_java_file
+from pystdoc.parser_kotlin import parse_kotlin_file
 from pystdoc.parser_python import parse_python_file
 from pystdoc.symbols import Symbol, get_kind_prefix
+
+__all__ = [
+    "normalize_language",
+    "get_code_language",
+    "get_code_snippet",
+    "extract_symbols",
+    "format_symbol_section",
+    "write_single_symbol_doc",
+    "write_individual_symbol_docs",
+    "write_symbol_doc",
+    "parse_clang_file",
+    "parse_generic_file",
+    "parse_java_file",
+    "parse_kotlin_file",
+    "parse_python_file",
+]
 
 
 def normalize_language(lang: Optional[str]) -> str:
@@ -29,18 +48,7 @@ def normalize_language(lang: Optional[str]) -> str:
 
 def get_code_language(extension: str) -> str:
     """Map file extension to Markdown code block language identifier."""
-    ext = extension.lower()
-    if ext in (".c", ".h"):
-        return "c"
-    elif ext in (".cpp", ".hpp", ".cc", ".cxx", ".hh"):
-        return "cpp"
-    elif ext == ".py":
-        return "python"
-    elif ext in (".sh", ".bash"):
-        return "bash"
-    elif ext == ".rs":
-        return "rust"
-    return "text"
+    return get_default_registry().get_code_language(extension)
 
 
 def get_code_snippet(file_path: Path, line_start: int, line_end: int) -> str:
@@ -61,13 +69,9 @@ def extract_symbols(
     comp_db: Optional[CompilationDatabase] = None,
 ) -> List[Symbol]:
     """Parse file based on extension and return list of Symbol objects."""
-    ext = file_path.suffix.lower()
-    if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh"):
-        return parse_clang_file(file_path, comp_db=comp_db)
-    elif ext == ".py":
-        return parse_python_file(file_path)
-    elif ext in (".sh", ".bash"):
-        return parse_generic_file(file_path)
+    adapter = get_default_registry().get_adapter_for_file(file_path)
+    if adapter:
+        return adapter.parse(file_path, comp_db=comp_db)
     return []
 
 

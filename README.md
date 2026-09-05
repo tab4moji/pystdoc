@@ -53,8 +53,10 @@ your_project/
    - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.docgen/documents/`).
    - `designgen`: Map-Reduce architectural synthesis (`.docgen/design/`).
    - `reportgen` / `pystdoc`: Executive summary README (`.docgen/README.md`) answering *"What does this project actually do?"*
-3. **C/C++, Python & Shell Deep Understanding**:
-   - **`compile_commands.json` Integration**: Full include path resolution and macro expansion via `libclang`.
+3. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
+   - **C/C++**: `compile_commands.json` integration, include path resolution, and macro expansion via `libclang`.
+   - **Java / Kotlin**: AST parsing via `javalang` & `kopyt` with class hierarchy, companion objects, and data classes.
+   - **Python & Shell**: AST visitor and generic regex parser with import/call extraction.
    - **Fully Qualified Domain Names (FQDN)**: Disambiguates identical symbol names across large monorepos.
 4. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
@@ -71,34 +73,61 @@ pip install pystdoc
 
 ### Basic Usage
 
-#### 1. Generate Full Documentation & README (One Command)
+#### 1. Generate & Sync Full Documentation Suite (`sync` / Default)
 ```bash
+# Generate complete documentation (symbol docs, design docs, README overview)
 pystdoc --dir ./my_project/
-```
-*Output will be created at `./my_project/.docgen/README.md`.*
 
-#### 2. Generate in Japanese
-```bash
-pystdoc --dir ./my_project/ --language 日本語
+# Or explicitly with sync subcommand
+pystdoc sync --dir ./my_project/ --language 日本語
 ```
 
-#### 3. Run Individual Steps
-```bash
-# Generate symbol-level docs into .docgen/documents/
-docgen --dir ./my_project/ -j 4
+#### 2. Inspect & Query Indexed Codebase (Read from `.docgen/`)
+Once `.docgen/` is generated, you can query symbols, functions, variables, and files without touching LLMs:
 
-# Synthesize architecture design docs into .docgen/design/
-designgen --dir ./my_project/
+```bash
+# List all indexed source code files
+pystdoc list ./my_project/
+# Alias: ls
+pystdoc ls
+
+# List all functions and methods with file & line ranges (<name> (<file>:<from>:<to>))
+pystdoc functions
+# Aliases: fn, func, funcs, fns
+pystdoc fn
+
+# List all variables, constants, and fields
+pystdoc variables
+# Aliases: var, vars
+pystdoc var
+
+# Inspect detailed description, purpose, overview, and signature of a symbol
+pystdoc description Userlib.main
+# Alias: desc (Supports dot notation, C++ scope resolution, and short names)
+pystdoc desc Userlib::main
+pystdoc desc logMessage
 ```
 
-#### 4. Practical Real-World Example (Dedicated Remote LLM Server)
+#### 3. Practical Real-World Example (Dedicated Remote LLM Server)
 ```bash
-pystdoc --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-26b-a4b --language 日本語
+pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-26b-a4b --language 日本語
 ```
 
 ---
 
-## ⚙️ CLI Options
+## 🛠️ CLI Subcommands & Commands Overview
+
+| Subcommand | Aliases | Description |
+| :--- | :--- | :--- |
+| `sync` | *(default)* | Run full 3-in-1 unified pipeline: parse code, generate symbol docs, architecture design, and project README. |
+| `list` | `ls` | List all indexed source files from `.docgen/`. |
+| `functions` | `fn`, `func`, `funcs`, `fns` | List all indexed functions/methods with source location `(<file>:<from>:<to>)`. |
+| `variables` | `var`, `vars` | List all indexed variables, constants, and data model fields with location. |
+| `description` | `desc` | Display rich purpose, overview, signature, and source location for specified symbol or FQDN. |
+
+---
+
+## ⚙️ CLI Options (for `sync` / `pystdoc`)
 
 | Option | Alias / Env | Default | Description |
 | :--- | :--- | :--- | :--- |

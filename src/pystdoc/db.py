@@ -4,7 +4,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pystdoc.symbols import Symbol
 
@@ -272,6 +272,69 @@ class DocgenDB:
                                    ensure_ascii=False),
                     ),
                 )
+
+    def get_all_files(self) -> List[str]:
+        """Return list of all indexed file relative paths."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT rel_path FROM file_hashes ORDER BY rel_path")
+            return [row["rel_path"] for row in cur.fetchall()]
+
+    def get_all_symbols_metadata(self) -> List[Dict[str, Any]]:
+        """Return metadata for all indexed symbols ordered by file and line."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT unique_id, name, kind, fqdn, rel_path, line_start,
+                       line_end, signature, callees_json,
+                       referencing_funcs_json
+                FROM symbols_metadata
+                ORDER BY rel_path, line_start
+            """)
+            return [dict(row) for row in cur.fetchall()]
+
+    def find_symbols_by_query(self, query: str) -> List[Dict[str, Any]]:
+        """Search symbol metadata by exact FQDN/name, suffix, or substring."""
+        clean_query = query.strip()
+        dot_query = clean_query.replace("::", ".")
+        with self.lock:
+            cur = self.conn.cursor()
+            # 1. Exact match by unique_id, name, fqdn, or dot_query
+            cur.execute("""
+                SELECT unique_id, name, kind, fqdn, rel_path, line_start,
+                       line_end, signature, callees_json,
+                       referencing_funcs_json
+                FROM symbols_metadata
+                WHERE unique_id = ? OR fqdn = ? OR fqdn = ? OR name = ?
+                ORDER BY rel_path, line_start
+            """, (clean_query, clean_query, dot_query, clean_query))
+            rows = [dict(r) for r in cur.fetchall()]
+            if rows:
+                return rows
+
+            # 2. Suffix match (e.g. searching 'main' matches 'Userlib.main')
+            cur.execute("""
+                SELECT unique_id, name, kind, fqdn, rel_path, line_start,
+                       line_end, signature, callees_json,
+                       referencing_funcs_json
+                FROM symbols_metadata
+                WHERE fqdn LIKE ? OR fqdn LIKE ?
+                ORDER BY rel_path, line_start
+            """, (f"%.{dot_query}", f"%::{clean_query}"))
+            rows = [dict(r) for r in cur.fetchall()]
+            if rows:
+                return rows
+
+            # 3. Case-insensitive substring match
+            cur.execute("""
+                SELECT unique_id, name, kind, fqdn, rel_path, line_start,
+                       line_end, signature, callees_json,
+                       referencing_funcs_json
+                FROM symbols_metadata
+                WHERE LOWER(fqdn) LIKE ? OR LOWER(name) LIKE ?
+                ORDER BY rel_path, line_start
+            """, (f"%{dot_query.lower()}%", f"%{clean_query.lower()}%"))
+            return [dict(r) for r in cur.fetchall()]
 
     def close(self) -> None:
         """Close SQLite connection."""

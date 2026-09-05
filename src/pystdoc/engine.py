@@ -21,7 +21,10 @@ from pystdoc.doc_writer import (
     write_individual_symbol_docs,
     normalize_language,
 )
-from pystdoc.llm_client import LLMClient
+from pystdoc.llm_client import (
+    LLMClient,
+    sanitize_architectural_context,
+)
 from pystdoc.symbols import get_kind_prefix
 from pystdoc.call_graph import (
     SymbolNode,
@@ -69,45 +72,95 @@ class FileLock:
 
 
 def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
-    """Generate docs for enums/constants from AST metadata."""
+    """Generate docs for enums/constants/fields/types from AST metadata."""
     is_ja = lang_norm in ("Japanese", "日本語")
     kind = sym.kind.lower()
 
+    # Extract parent container name from FQDN if available
+    parent_name = ""
+    if sym.fqdn and "." in sym.fqdn:
+        parts = sym.fqdn.split(".")
+        if len(parts) >= 2:
+            parent_name = parts[-2]
+
+    sig_display = sym.signature or sym.name
+
     if "enum" in kind or kind == "enum_constant" or "const" in kind:
         if is_ja:
+            p_ctx = f"「{parent_name}」における" if parent_name else ""
             return {
                 "purpose": (
-                    f"状態コードまたは識別子定数 `{sym.name}` を定義する"
+                    f"{p_ctx}状態コードまたは識別定数 `{sym.name}` を定義する"
                     "列挙型・定数要素。"
                 ),
                 "inputs": "なし（定数定義）。",
-                "outputs": f"`{sym.signature or sym.name}` の定数識別値。",
+                "outputs": f"`{sig_display}` の定数識別値。",
                 "overview": (
-                    "ステータス管理や条件分岐で各関数から参照される"
-                    f"列挙型・定数 `{sym.name}` の定義。"
+                    f"ステータス管理や条件判定で各処理から参照される"
+                    f"列挙型・定数 `{sym.name}` の仕様。"
                 ),
             }
         else:
+            p_ctx = f" in `{parent_name}`" if parent_name else ""
             return {
                 "purpose": (
-                    "Defines status code, constant, or enumeration "
-                    f"`{sym.name}`."
+                    f"Defines status code, constant, or enumeration "
+                    f"`{sym.name}`{p_ctx}."
                 ),
                 "inputs": "None (constant definition).",
-                "outputs": f"Constant `{sym.signature or sym.name}`.",
+                "outputs": f"Constant `{sig_display}`.",
                 "overview": (
-                    "Enumeration and constant definition used for status "
-                    "handling and conditional flow across modules."
+                    f"Enumeration and constant definition `{sym.name}` "
+                    "referenced in conditional logic and status management."
+                ),
+            }
+    elif "field" in kind or "member" in kind:
+        if is_ja:
+            p_ctx = (
+                f"データモデル「{parent_name}」"
+                if parent_name
+                else "データ構造"
+            )
+            return {
+                "purpose": (
+                    f"{p_ctx}において、`{sym.name}` ({sig_display}) の"
+                    "データを保持・伝達するフィールド定義。"
+                ),
+                "inputs": "インスタンス初期化時またはプロパティ代入時の設定値。",
+                "outputs": f"`{sig_display}` の保持データ値。",
+                "overview": (
+                    f"{p_ctx}のプロパティとして、モジュール間や関数間での"
+                    f"データ受渡し・状態保持に利用されます。"
+                ),
+            }
+        else:
+            p_ctx = (
+                f"in data model `{parent_name}`"
+                if parent_name
+                else "in data structure"
+            )
+            return {
+                "purpose": (
+                    f"Defines field `{sym.name}` ({sig_display}) {p_ctx} "
+                    "for data storage and transfer."
+                ),
+                "inputs": (
+                    "Value supplied during initialization or assignment."
+                ),
+                "outputs": f"Retained value `{sig_display}`.",
+                "overview": (
+                    f"Property utilized {p_ctx} to manage state and pass "
+                    "structured data across functions."
                 ),
             }
     elif "typedef" in kind or "type" in kind:
         if is_ja:
             return {
-                "purpose": f"データ型またはエイリアス `{sym.name}` の定義。",
+                "purpose": f"データ型または型エイリアス `{sym.name}` の仕様定義。",
                 "inputs": "なし（型定義）。",
-                "outputs": f"`{sym.signature or sym.name}` 型。",
+                "outputs": f"`{sig_display}` 型定義。",
                 "overview": (
-                    "システム全体で共通利用されるデータ構造または"
+                    f"システム全体で共通利用されるデータ構造または"
                     f"型エイリアス `{sym.name}` の仕様。"
                 ),
             }
@@ -115,7 +168,7 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
             return {
                 "purpose": f"Defines data type or alias `{sym.name}`.",
                 "inputs": "None (type definition).",
-                "outputs": f"Type `{sym.signature or sym.name}`.",
+                "outputs": f"Type `{sig_display}`.",
                 "overview": (
                     "Specification of data structure or type alias "
                     f"`{sym.name}` used across modules."
@@ -127,8 +180,8 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
                 "purpose": (
                     f"データモデルまたは構造 `{sym.name}` の定義。"
                 ),
-                "inputs": "メンバ変数の初期化・設定。",
-                "outputs": f"`{sym.signature or sym.name}` の構造体データ。",
+                "inputs": "メンバ変数の初期化・設定パラメータ。",
+                "outputs": f"`{sig_display}` の構造体データ。",
                 "overview": (
                     "複数のデータ項目を集約して各モジュール間で受け渡すための "
                     f"`{sym.name}` の定義。"
@@ -139,8 +192,8 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
                 "purpose": (
                     f"Defines data model or structure `{sym.name}`."
                 ),
-                "inputs": "Member field initialization.",
-                "outputs": f"Data structure `{sym.signature or sym.name}`.",
+                "inputs": "Member field initialization parameters.",
+                "outputs": f"Data structure `{sig_display}`.",
                 "overview": (
                     "Encapsulates structured data fields for inter-module "
                     f"passing as `{sym.name}`."
@@ -150,10 +203,10 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
         if is_ja:
             return {
                 "purpose": (
-                    f"`{sym.name}` の状態データを保持する変数定義。"
+                    f"状態データ `{sym.name}` ({sig_display}) を保持する変数定義。"
                 ),
-                "inputs": "代入される値。",
-                "outputs": "保持される状態値。",
+                "inputs": "代入される状態値。",
+                "outputs": f"`{sig_display}` の保持値。",
                 "overview": (
                     "各処理関数から参照・更新される共有状態 "
                     f"`{sym.name}` のデータ領域。"
@@ -162,10 +215,11 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
         else:
             return {
                 "purpose": (
-                    f"Holds state data for variable `{sym.name}`."
+                    f"Holds state data for variable `{sym.name}` "
+                    f"({sig_display})."
                 ),
-                "inputs": "Assigned value.",
-                "outputs": "Retained state value.",
+                "inputs": "Assigned state value.",
+                "outputs": f"Retained value `{sig_display}`.",
                 "overview": (
                     "Shared state data storage accessed and updated "
                     f"by processing functions as `{sym.name}`."
@@ -174,17 +228,17 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
 
     if is_ja:
         return {
-            "purpose": f"`{sym.name}` ({sym.kind}) の定義。",
+            "purpose": f"`{sym.name}` ({sym.kind}) の機能定義。",
             "inputs": "パラメータ定義に従う。",
-            "outputs": "結果値または状態遷移。",
-            "overview": f"`{sym.name}` の基本仕様。",
+            "outputs": f"`{sig_display}` の処理結果。",
+            "overview": f"`{sym.name}` の処理仕様およびモジュール内での役割。",
         }
     else:
         return {
             "purpose": f"Defines `{sym.name}` ({sym.kind}).",
             "inputs": "According to parameter definitions.",
-            "outputs": "Result value or state mutation.",
-            "overview": f"Basic specification for `{sym.name}`.",
+            "outputs": f"Result `{sig_display}`.",
+            "overview": f"Basic specification and role for `{sym.name}`.",
         }
 
 
@@ -369,7 +423,14 @@ def run_docgen(
             sym_kind_lower = sym.kind.lower()
             is_static_bypass = (
                 "enum" in sym_kind_lower
-                or sym_kind_lower in ("enum_constant", "typedef")
+                or sym_kind_lower in (
+                    "enum_constant",
+                    "typedef",
+                    "field",
+                    "member",
+                    "variable",
+                    "const",
+                )
             )
 
             if cached_data:
@@ -460,8 +521,14 @@ def run_docgen(
                     sym.outputs_note = explanation["outputs"]
                 if explanation.get("overview"):
                     sym.overview = explanation["overview"]
-                if explanation.get("role"):
-                    sym.top_down_context = explanation["role"]
+                raw_arch = (
+                    explanation.get("architectural_context")
+                    or explanation.get("role")
+                )
+                if raw_arch:
+                    sym.top_down_context = sanitize_architectural_context(
+                        raw_arch, fallback_text=sym.purpose or ""
+                    )
 
                 save_payload = {
                     "purpose": sym.purpose,
@@ -520,16 +587,30 @@ def run_docgen(
                         db.close()
                         return 1
 
-        # 4. Pass 2: Top-down variable refinement
+        # 4. Pass 2: Top-down variable & field refinement
+        type_nodes = [
+            n
+            for n in all_symbol_nodes
+            if get_kind_prefix(n.symbol.kind) == "type"
+        ]
         var_nodes = [
             n
             for n in all_symbol_nodes
-            if get_kind_prefix(n.symbol.kind) == "var"
+            if get_kind_prefix(n.symbol.kind) in ("var", "const")
+            or n.symbol.kind.lower() in (
+                "field",
+                "member",
+                "variable",
+                "var",
+                "const",
+                "constant",
+                "enum_constant",
+            )
         ]
         total_var_count = len(var_nodes)
         print(
-            f"[4/5] Pass 2: Top-down variable contextual refinement "
-            f"({total_var_count} variables)...",
+            f"[4/5] Pass 2: Top-down contextual refinement "
+            f"({total_var_count} data symbols)...",
             flush=True,
         )
 
@@ -558,6 +639,38 @@ def run_docgen(
                     f"[{v_curr}/{total_var_count} ({v_percent:5.1f}%)]"
                 )
 
+            # Find parent container (class/struct/model)
+            parent_container_info = None
+            parent_name = ""
+            if v_sym.fqdn and "." in v_sym.fqdn:
+                parts = v_sym.fqdn.split(".")
+                if len(parts) >= 2:
+                    parent_name = parts[-2]
+            elif "::" in v_node.unique_id:
+                id_part = v_node.unique_id.split("::", 1)[1]
+                raw_id = id_part.split(".", 1)[-1]
+                if "." in raw_id:
+                    parent_name = raw_id.rsplit(".", 1)[0].split(".")[-1]
+
+            if parent_name:
+                for t in type_nodes:
+                    if t.rel_path == v_rel and t.symbol.name == parent_name:
+                        parent_container_info = {
+                            "name": t.symbol.name,
+                            "kind": t.symbol.kind,
+                            "purpose": t.symbol.purpose or "",
+                            "overview": t.symbol.overview or "",
+                        }
+                        break
+                if not parent_container_info:
+                    parent_container_info = {
+                        "name": parent_name,
+                        "kind": "class/struct/data model",
+                        "purpose": "",
+                        "overview": "",
+                    }
+
+            # Find referencing/parent functions
             parent_funcs = []
             for f in fn_nodes:
                 if f.rel_path == v_rel:
@@ -586,15 +699,22 @@ def run_docgen(
 
             should_refine = (
                 llm_client
-                and parent_funcs
+                and (parent_funcs or parent_container_info)
                 and (force or not v_sym.top_down_context)
             )
             if should_refine:
-                funcs_names = ", ".join(f["name"] for f in parent_funcs[:2])
+                ctx_names = []
+                if parent_container_info:
+                    ctx_names.append(f"Model: {parent_container_info['name']}")
+                if parent_funcs:
+                    f_names = ", ".join(f["name"] for f in parent_funcs[:2])
+                    ctx_names.append(f"Funcs: {f_names}")
+                ctx_desc = " | ".join(ctx_names)
+
                 with print_lock:
                     print(
-                        f"  {v_progress} [Top-down Variable Updating...]: "
-                        f"{v_node.unique_id} (Referenced by: {funcs_names})",
+                        f"  {v_progress} [Top-down Context Updating...]: "
+                        f"{v_node.unique_id} ({ctx_desc})",
                         flush=True,
                     )
 
@@ -613,16 +733,24 @@ def run_docgen(
                     lang=lang,
                     language=norm_lang,
                     allow_fallback=allow_fallback,
+                    parent_container_info=parent_container_info,
                 )
                 var_elapsed = time.time() - start_var_time
 
-                v_role = (
-                    top_down_res.get("role")
+                raw_v_role = (
+                    top_down_res.get("architectural_context")
+                    or top_down_res.get("role")
                     or top_down_res.get("significance")
                     or top_down_res.get("top_down_summary")
                 )
-                if v_role:
-                    v_sym.top_down_context = v_role
+                if raw_v_role:
+                    v_sym.top_down_context = sanitize_architectural_context(
+                        raw_v_role, fallback_text=v_sym.purpose or ""
+                    )
+                if top_down_res.get("purpose"):
+                    v_sym.purpose = top_down_res["purpose"]
+                if top_down_res.get("overview"):
+                    v_sym.overview = top_down_res["overview"]
 
                 save_payload = {
                     "purpose": v_sym.purpose,
