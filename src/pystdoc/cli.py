@@ -394,9 +394,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     if subcmd == "mcp":
         parser = argparse.ArgumentParser(
             prog="pystdoc mcp",
-            description=(
-                "Run FastMCP server (auto-watches codebase for changes)"
-            ),
+            description="Run FastMCP server on stdio transport",
         )
         parser.add_argument(
             "dir_pos", nargs="?", default=None,
@@ -406,9 +404,16 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             "--dir", default="./", help="Target project directory"
         )
         parser.add_argument(
-            "--no-watch",
+            "--watch", "-w",
             action="store_true",
-            help="Disable automatic background file watching",
+            default=False,
+            help="Enable automatic background file watching (default: false)",
+        )
+        parser.add_argument(
+            "--no-watch",
+            action="store_false",
+            dest="watch",
+            help="Disable automatic background file watching (default)",
         )
         args = parser.parse_args(sub_args)
         target = Path(
@@ -416,7 +421,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         ).resolve()
         from pystdoc.mcp_server import run_mcp_server
 
-        run_mcp_server(target_dir=target, auto_watch=not args.no_watch)
+        run_mcp_server(target_dir=target, auto_watch=args.watch)
         sys.exit(0)
 
     elif subcmd == "list":

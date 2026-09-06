@@ -141,7 +141,7 @@ class MCPWatcherManager:
 
 def create_mcp_server(
     target_dir: Optional[Path] = None,
-    auto_watch: bool = True,
+    auto_watch: bool = False,
 ) -> Any:
     """Create and configure the FastMCP server instance for pystdoc."""
     if FastMCP is None:
@@ -589,7 +589,7 @@ def create_mcp_server(
 
 def run_mcp_server(
     target_dir: Optional[Path] = None,
-    auto_watch: bool = True,
+    auto_watch: bool = False,
 ) -> None:
     """Run FastMCP server on stdio transport."""
     server = create_mcp_server(target_dir=target_dir, auto_watch=auto_watch)

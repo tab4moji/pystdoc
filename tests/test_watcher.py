@@ -46,6 +46,13 @@ class TestWatcher(unittest.TestCase):
         new_file.unlink()
         self.assertTrue(watcher.check_changes())
 
+        # 4. Modify files inside .docgen/ (should be strictly ignored)
+        docgen_dir = self.test_dir / ".docgen"
+        docgen_dir.mkdir(parents=True, exist_ok=True)
+        (docgen_dir / "README.md").write_text("# Autogen", encoding="utf-8")
+        (docgen_dir / "files.txt").write_text("main.py\n", encoding="utf-8")
+        self.assertFalse(watcher.check_changes())
+
     def test_watcher_non_blocking_start_and_trigger(self):
         callback_called = []
 
@@ -153,6 +160,15 @@ class TestWatcher(unittest.TestCase):
         w4 = DNotifyWatcher(self.test_dir, lambda: None, use_dnotify=False)
         w4._setup_dnotify()
         self.assertEqual(len(w4._dir_fds), 0)
+
+        # 5. _setup_dnotify on empty directory
+        with tempfile.TemporaryDirectory() as empty_dir:
+            w5 = DNotifyWatcher(
+                Path(empty_dir), lambda: None, use_dnotify=True
+            )
+            w5._setup_dnotify()
+            self.assertGreaterEqual(len(w5._dir_fds), 1)
+            w5._close_dnotify()
 
     def test_run_watch_cli_full_branches(self):
         # 1. docgen failure branch

@@ -183,7 +183,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 `pystdoc` includes a built-in MCP server (`pystdoc mcp`) for **OpenCode**, Claude Desktop, and other MCP-compatible AI agents. It enables small local LLMs to retrieve targeted AST structures and symbol docs on-demand without loading multi-thousand-line source files into context.
 
 > [!NOTE]
-> **Automatic File Watching**: When running in MCP mode, `pystdoc` **automatically watches** the codebase in the background using Linux `dnotify` / mtime monitoring. Whenever code files are edited and saved, documentation is automatically kept in sync in the background. (Use `--no-watch` to disable).
+> **File Watching Option (`--watch`)**: In MCP mode, `--no-watch` is the default. To enable automatic background file watching via Linux `dnotify` / mtime monitoring (which automatically keeps `.docgen/` synchronized whenever code files are edited), pass `--watch` to the command (e.g. `["pystdoc", "mcp", "--watch"]`). Internal `.docgen/` files are strictly excluded from monitoring to prevent self-update loops.
 
 ### OpenCode Configuration (`~/.config/opencode/opencode.json`)
 

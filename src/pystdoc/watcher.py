@@ -65,9 +65,15 @@ class DNotifyWatcher:
         )
 
         matched_files = scan_files(self.target_dir)
-        watched_dirs: Set[Path] = {self.target_dir}
+        watched_dirs: Set[Path] = set()
         for rel in matched_files:
-            watched_dirs.add((self.target_dir / rel).parent)
+            parent = (self.target_dir / rel).parent
+            # Strictly exclude .docgen and other excluded directories
+            if ".docgen" not in parent.parts:
+                watched_dirs.add(parent)
+
+        if not watched_dirs and self.target_dir.exists():
+            watched_dirs.add(self.target_dir)
 
         pid = os.getpid()
         for d in watched_dirs:
@@ -76,10 +82,7 @@ class DNotifyWatcher:
                 try:
                     fd = os.open(d_str, os.O_RDONLY)
                     if hasattr(fcntl, "F_SETOWN"):
-                        try:
-                            fcntl.fcntl(fd, fcntl.F_SETOWN, pid)
-                        except Exception:
-                            pass
+                        fcntl.fcntl(fd, fcntl.F_SETOWN, pid)
                     fcntl.fcntl(fd, fcntl.F_NOTIFY, dn_events)
                     self._dir_fds[d_str] = fd
                 except Exception:
@@ -88,8 +91,7 @@ class DNotifyWatcher:
         try:
             def _sigio_handler(signum, frame):
                 with self._lock:
-                    self._last_change_time = time.time()
-                    self._pending_sync = True
+                    self._sigio_received = True
 
             signal.signal(signal.SIGIO, _sigio_handler)
             self._sigio_supported = True
@@ -132,6 +134,7 @@ class DNotifyWatcher:
 
     def start(self, blocking: bool = True) -> None:
         """Start watcher loop."""
+        self._sigio_received = False
         self._file_snapshots = self._get_current_snapshot()
         self._setup_dnotify()
         self._running = True
@@ -162,7 +165,14 @@ class DNotifyWatcher:
         """Internal watcher polling and debouncing loop."""
         try:
             while self._running:
-                if self.check_changes():
+                has_sigio = False
+                with self._lock:
+                    if getattr(self, "_sigio_received", False):
+                        has_sigio = True
+                        self._sigio_received = False
+
+                changed = self.check_changes()
+                if changed or (has_sigio and self.check_changes()):
                     with self._lock:
                         self._last_change_time = time.time()
                         self._pending_sync = True
@@ -198,6 +208,9 @@ class DNotifyWatcher:
                         f"[pystdoc watch] Auto-sync complete for "
                         f"{self.target_dir}. Resuming watch...\n"
                     )
+                    with self._lock:
+                        self._sigio_received = False
+                        self._pending_sync = False
                     self._file_snapshots = self._get_current_snapshot()
                     self._setup_dnotify()
 

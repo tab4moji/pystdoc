@@ -92,6 +92,11 @@ class TestMCPServer(unittest.TestCase):
     def test_create_mcp_server_tools(self):
         server = create_mcp_server(target_dir=self.test_dir, auto_watch=True)
         self.assertIsNotNone(server)
+        tool_fn = server._tool_manager.get_tool("pystdoc_get_overview").fn
+        res = tool_fn(path=str(self.test_dir))
+        self.assertIn("# Project README", res)
+        server._watcher_manager.stop_all()
+
         server_no_watch = create_mcp_server(auto_watch=False)
         self.assertIsNotNone(server_no_watch)
         self.assertIsNone(server_no_watch._watcher_manager)

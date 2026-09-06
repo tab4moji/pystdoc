@@ -363,6 +363,32 @@ class TestCLI(unittest.TestCase):
 
     def test_reportgen_cli_mcp_subcommand(self):
         for alias in ["mcp", "serve", "server"]:
+            # 1. Default (no-watch is default)
+            with patch("pystdoc.mcp_server.run_mcp_server") as mock_mcp:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([
+                        alias,
+                        "--dir", str(self.test_dir),
+                    ])
+                self.assertEqual(cm.exception.code, 0)
+                mock_mcp.assert_called_once_with(
+                    target_dir=self.test_dir, auto_watch=False
+                )
+
+            # 2. Explicit --watch
+            with patch("pystdoc.mcp_server.run_mcp_server") as mock_mcp:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([
+                        alias,
+                        "--dir", str(self.test_dir),
+                        "--watch",
+                    ])
+                self.assertEqual(cm.exception.code, 0)
+                mock_mcp.assert_called_once_with(
+                    target_dir=self.test_dir, auto_watch=True
+                )
+
+            # 3. Explicit --no-watch
             with patch("pystdoc.mcp_server.run_mcp_server") as mock_mcp:
                 with self.assertRaises(SystemExit) as cm:
                     reportgen_main([
