@@ -136,6 +136,45 @@ def check_external_interface_changed(
     return True
 
 
+def get_candidate_doc_filenames(node: SymbolNode) -> List[str]:
+    """Get all potential individual doc filenames for a symbol node."""
+    sym = node.symbol
+    k_pfx = get_kind_prefix(sym.kind)
+    rel_str = node.rel_path.as_posix()
+
+    candidates: List[str] = [
+        f"{rel_str}.{k_pfx}.{sym.name}.md"
+    ]
+
+    prefix_in_unique_id = ""
+    if "::" in node.unique_id:
+        id_part = node.unique_id.split("::", 1)[1]
+        raw_id = id_part.split(".", 1)[-1]
+        if "." in raw_id:
+            prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
+        candidates.append(f"{rel_str}.{k_pfx}.{raw_id}.md")
+
+    if prefix_in_unique_id:
+        candidates.append(
+            f"{rel_str}.{k_pfx}.{prefix_in_unique_id}{sym.name}.md"
+        )
+
+    # From FQDN parts
+    fqdn_to_use = sym.fqdn or node.fqdn
+    if fqdn_to_use and "." in fqdn_to_use:
+        parts = fqdn_to_use.split(".")
+        if len(parts) >= 2:
+            candidates.append(
+                f"{rel_str}.{k_pfx}.{parts[-2]}.{sym.name}.md"
+            )
+        if len(parts) >= 3:
+            candidates.append(
+                f"{rel_str}.{k_pfx}.{parts[-3]}.{parts[-2]}.{sym.name}.md"
+            )
+
+    return list(dict.fromkeys(candidates))
+
+
 def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
     """Generate docs for enums/constants/fields/types from AST metadata."""
     is_ja = lang_norm in ("Japanese", "日本語")
@@ -446,38 +485,19 @@ def run_docgen(
             sym_hash = compute_symbol_hash(snippet, sym.signature, sym.doc)
             node_hashes[node.unique_id] = sym_hash
 
-            prefix_in_unique_id = ""
-            if "::" in node.unique_id:
-                id_part = node.unique_id.split("::", 1)[1]
-                raw_id = id_part.split(".", 1)[-1]
-                if "." in raw_id:
-                    prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
-
-            k_pfx = get_kind_prefix(sym.kind)
-            sym_id_str = (
-                f"{prefix_in_unique_id}{sym.name}"
-                if prefix_in_unique_id
-                else sym.name
-            )
             docgen_docs_dir = target_dir / ".docgen" / "documents"
-            expected_sym_doc = (
-                docgen_docs_dir
-                / f"{node.rel_path.as_posix()}.{k_pfx}.{sym_id_str}.md"
-            )
-            alt_sym_doc = (
-                docgen_docs_dir
-                / f"{node.rel_path.as_posix()}.{k_pfx}.{sym.name}.md"
-            )
             expected_file_doc = (
                 docgen_docs_dir / f"{node.rel_path.as_posix()}.md"
             )
+            candidate_files = get_candidate_doc_filenames(node)
+            sym_file_exists = any(
+                (docgen_docs_dir / fn).exists() for fn in candidate_files
+            )
+
             cache_key = f"{node.unique_id}::{norm_lang}"
             has_cache = (
                 db.load_symbol_cache(cache_key) is not None
                 or db.load_symbol_cache(node.unique_id) is not None
-            )
-            sym_file_exists = (
-                expected_sym_doc.exists() or alt_sym_doc.exists()
             )
             doc_file_missing = (
                 not has_cache
@@ -848,30 +868,10 @@ def run_docgen(
                             }
                         )
 
-            prefix_in_unique_id = ""
-            if "::" in v_node.unique_id:
-                id_part = v_node.unique_id.split("::", 1)[1]
-                raw_id = id_part.split(".", 1)[-1]
-                if "." in raw_id:
-                    prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
-
-            v_k_pfx = get_kind_prefix(v_sym.kind)
-            v_sym_id_str = (
-                f"{prefix_in_unique_id}{v_sym.name}"
-                if prefix_in_unique_id
-                else v_sym.name
-            )
             v_docgen_docs_dir = target_dir / ".docgen" / "documents"
-            v_expected_sym_doc = (
-                v_docgen_docs_dir
-                / f"{v_rel.as_posix()}.{v_k_pfx}.{v_sym_id_str}.md"
-            )
-            v_alt_sym_doc = (
-                v_docgen_docs_dir
-                / f"{v_rel.as_posix()}.{v_k_pfx}.{v_sym.name}.md"
-            )
-            v_doc_missing = (
-                not v_expected_sym_doc.exists() and not v_alt_sym_doc.exists()
+            v_candidates = get_candidate_doc_filenames(v_node)
+            v_doc_missing = not any(
+                (v_docgen_docs_dir / fn).exists() for fn in v_candidates
             )
 
             # Check if this node is downstream of any updated symbols

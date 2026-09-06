@@ -1550,6 +1550,46 @@ class TestCoverageBoost(unittest.TestCase):
             check_external_interface_changed(old_partial, partial_sym)
         )
 
+    def test_get_candidate_doc_filenames(self):
+        """Test get_candidate_doc_filenames with unique_ids and FQDNs."""
+        from pystdoc.engine import get_candidate_doc_filenames
+        from pystdoc.call_graph import SymbolNode
+        from pystdoc.symbols import Symbol
+
+        sym = Symbol(
+            name="get",
+            kind="function",
+            line_start=1,
+            line_end=2,
+            fqdn="io.github.tab4moji.kawaraBang.MainViewModel.get",
+        )
+        node = SymbolNode(
+            symbol=sym,
+            rel_path=Path("app/MainViewModel.kt"),
+            full_path=Path("/tmp/app/MainViewModel.kt"),
+            unique_id="app/MainViewModel.kt::fn.MainViewModel.get",
+            fqdn=sym.fqdn,
+        )
+
+        candidates = get_candidate_doc_filenames(node)
+        self.assertIn("app/MainViewModel.kt.fn.get.md", candidates)
+        self.assertIn(
+            "app/MainViewModel.kt.fn.MainViewModel.get.md", candidates
+        )
+
+        # Simple node without FQDN
+        sym_simple = Symbol(
+            name="top_fn", kind="function", line_start=1, line_end=1
+        )
+        node_simple = SymbolNode(
+            symbol=sym_simple,
+            rel_path=Path("main.py"),
+            full_path=Path("/tmp/main.py"),
+            unique_id="main.py::fn.top_fn",
+        )
+        candidates_simple = get_candidate_doc_filenames(node_simple)
+        self.assertIn("main.py.fn.top_fn.md", candidates_simple)
+
 
 if __name__ == "__main__":
     unittest.main()
