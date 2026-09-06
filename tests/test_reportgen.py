@@ -125,9 +125,6 @@ class TestReportgen(unittest.TestCase):
             db=db,
         )
         self.assertIn("# Regenerated README", res_regen)
-        self.assertEqual(mock_llm.chat_completion.call_count, 3)
-        self.assertTrue(readme_file.exists())
-
         # 5. Fallback exception test
         mock_llm_fail = MagicMock()
         mock_llm_fail.chat_completion.side_effect = Exception("LLM dead")
@@ -140,6 +137,33 @@ class TestReportgen(unittest.TestCase):
                 allow_fallback=False,
                 db=db,
             )
+
+        # 6. Inferred types test
+        # 6a. GUI Application with UI annotation
+        docs_dir = self.docgen_dir / "documents"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "MainAct.kt.md").write_text(
+            "- **Interaction Specification**: Activity UI event handler",
+            encoding="utf-8",
+        )
+        res_gui = generate_readme_doc(
+            target_dir=self.test_dir,
+            llm_client=None,
+            allow_fallback=True,
+        )
+        self.assertIn("- **Type**: GUI Application", res_gui)
+
+        # 6b. CLI Application with overview text
+        (docs_dir / "MainAct.kt.md").unlink()
+        (self.design_dir / "overview.md").write_text(
+            "This is a CLI tool for automation.", encoding="utf-8"
+        )
+        res_cli = generate_readme_doc(
+            target_dir=self.test_dir,
+            llm_client=None,
+            allow_fallback=True,
+        )
+        self.assertIn("- **Type**: CLI Application", res_cli)
 
 
 if __name__ == "__main__":

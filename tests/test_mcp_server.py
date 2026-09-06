@@ -187,11 +187,88 @@ class TestMCPServer(unittest.TestCase):
             section="unknown_section", path=str(self.test_dir)
         )
         self.assertIn("not found", res_not_found)
+        self.assertIn("Available module sections: query.", res_not_found)
 
-        # 7. Non-existent .docgen dir
+        # 7. File path as section
+        res_file_path = tool_fn(
+            section="src/pystdoc/query.py", path=str(self.test_dir)
+        )
+        self.assertEqual(res_file_path, "# Query Module")
+
+        # 8. Non-existent .docgen dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(section="overview", path=empty_dir)
             self.assertIn("Error: .docgen directory not found", res_no_dir)
+
+    def test_mcp_get_overview(self):
+        server = create_mcp_server()
+        tool_fn = None
+        for t in server._tool_manager.list_tools():
+            if t.name == "pystdoc_get_overview":
+                tool_fn = server._tool_manager.get_tool(t.name).fn
+                break
+        self.assertIsNotNone(tool_fn)
+
+        # 1. Success
+        res = tool_fn(path=str(self.test_dir))
+        self.assertIn("# Project README", res)
+        self.assertIn("# Architecture Overview", res)
+
+        # 2. Non-existent .docgen dir
+        with tempfile.TemporaryDirectory() as empty_dir:
+            res_no_dir = tool_fn(path=empty_dir)
+            self.assertIn("Error: .docgen directory not found", res_no_dir)
+
+        # 3. Empty docs
+        with tempfile.TemporaryDirectory() as empty_proj:
+            p = Path(empty_proj)
+            (p / ".docgen" / "design").mkdir(parents=True)
+            res_empty = tool_fn(path=empty_proj)
+            self.assertIn("No overview documentation available", res_empty)
+
+    def test_mcp_search_symbols(self):
+        server = create_mcp_server()
+        tool_fn = None
+        for t in server._tool_manager.list_tools():
+            if t.name == "pystdoc_search_symbols":
+                tool_fn = server._tool_manager.get_tool(t.name).fn
+                break
+        self.assertIsNotNone(tool_fn)
+
+        # 1. Search all matching calc
+        res_calc = tool_fn(query="calc", kind="all", path=str(self.test_dir))
+        self.assertIn("Found 3 matching symbol(s)", res_calc)
+        self.assertIn("calc.run_calc", res_calc)
+        self.assertIn("calc.CalcState", res_calc)
+
+        # 2. Search functions
+        res_fn = tool_fn(query="calc", kind="func", path=str(self.test_dir))
+        self.assertIn("calc.run_calc", res_fn)
+        self.assertNotIn("calc.CalcState", res_fn)
+
+        # 3. Search types
+        res_type = tool_fn(query="calc", kind="class", path=str(self.test_dir))
+        self.assertIn("calc.CalcState", res_type)
+
+        # 4. Search vars
+        res_var = tool_fn(query="max", kind="var", path=str(self.test_dir))
+        self.assertIn("calc.MAX_VAL", res_var)
+
+        # 5. No match
+        res_none = tool_fn(query="xyz987", path=str(self.test_dir))
+        self.assertIn("No symbols found", res_none)
+
+        # 6. Non-existent dir
+        with tempfile.TemporaryDirectory() as empty_dir:
+            res_no_dir = tool_fn(query="calc", path=empty_dir)
+            self.assertIn("Error: .docgen directory not found", res_no_dir)
+
+        # 7. Missing DB
+        with tempfile.TemporaryDirectory() as no_db_proj:
+            p = Path(no_db_proj)
+            (p / ".docgen").mkdir(parents=True)
+            res_no_db = tool_fn(query="calc", path=no_db_proj)
+            self.assertIn("Error: index database", res_no_db)
 
     def test_mcp_list_files(self):
         server = create_mcp_server()

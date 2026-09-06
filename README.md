@@ -189,11 +189,13 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-2
 ```
 
 ### Tools Provided by MCP Server:
+- `pystdoc_get_overview(path)`: Retrieve the executive summary (`README.md`) and high-level architectural overview (`overview.md`) in one call.
+- `pystdoc_search_symbols(query, kind, path)`: Search indexed symbols by keyword/substring, returning their FQDN, file location, and purpose summary.
 - `pystdoc_get_symbol(symbol, path)`: Retrieve rich purpose, overview, signature, line ranges, and markdown snippet for a specific symbol.
 - `pystdoc_list_symbols(kind, path)`: List indexed symbols (`function`, `variable`, `type`, or `all`) with definition line ranges (`file:from:to`).
-- `pystdoc_get_design(section, path)`: Retrieve architecture design docs (`overview`, `data_models`, `execution_model`, `readme`, or module names).
+- `pystdoc_get_design(section, path)`: Retrieve architecture design docs (`readme`, `overview`, `data_models`, `execution_model`, or module names like `MainViewModel`).
 - `pystdoc_list_files(path)`: List all indexed source code files.
-- `pystdoc_sync(path, no_llm, language)`: Generate or update full `.docgen/` suite.
+- `pystdoc_sync(path, no_llm, language)`: Generate or update full `.docgen/` suite and return the executive summary immediately.
 
 ---
 

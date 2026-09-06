@@ -12,6 +12,7 @@ except (ImportError, ModuleNotFoundError):
         FastMCP = None  # type: ignore
 
 from pystdoc.config import load_config
+from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
 from pystdoc.llm_client import LLMClient
@@ -34,10 +35,147 @@ def create_mcp_server() -> Any:
             "Please install with `pip install mcp`."
         )
 
+    server_instructions = (
+        "pystdoc: Structural & Architecture Documentation MCP Server.\n"
+        "Guidelines for LLM assistant:\n"
+        "1. To understand or explain the system/project, call "
+        "`pystdoc_get_overview` or `pystdoc_get_design(section='readme')`.\n"
+        "2. To explore architecture, data models, or execution flow, call "
+        "`pystdoc_get_design` with 'overview', 'data_models', or "
+        "'execution_model'.\n"
+        "3. To find classes, functions, or variables, call "
+        "`pystdoc_search_symbols` or `pystdoc_list_symbols`.\n"
+        "4. To inspect signature and doc for a specific symbol, call "
+        "`pystdoc_get_symbol`.\n"
+        "5. If documentation is missing or outdated, call `pystdoc_sync` "
+        "to generate full docs."
+    )
+
     mcp = FastMCP(
         "pystdoc",
-        instructions="Python Structural & Codebase Documentation MCP",
+        instructions=server_instructions,
     )
+
+    @mcp.tool(
+        name="pystdoc_get_overview",
+        description=(
+            "Get the high-level executive summary, software classification, "
+            "purpose, and architectural overview of the project in one call."
+        ),
+    )
+    def get_overview(path: str = "./") -> str:
+        """Get the executive README and high-level architectural overview."""
+        target_dir = Path(path).resolve()
+        docgen_dir = _get_docgen_dir(target_dir)
+        if not docgen_dir.exists():
+            return (
+                f"Error: .docgen directory not found in {target_dir}. "
+                "Please run pystdoc_sync first."
+            )
+        readme_file = docgen_dir / "README.md"
+        overview_file = docgen_dir / "design" / "overview.md"
+        parts = []
+        if readme_file.exists():
+            parts.append(
+                readme_file.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
+            )
+        if overview_file.exists():
+            parts.append(
+                overview_file.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
+            )
+        if not parts:
+            return (
+                "No overview documentation available in .docgen. "
+                "Please run pystdoc_sync."
+            )
+        return "\n\n---\n\n".join(parts)
+
+    @mcp.tool(
+        name="pystdoc_search_symbols",
+        description=(
+            "Search indexed symbols (functions, classes/types, variables) "
+            "by name, keyword, or substring match, returning their FQDN, "
+            "definition location, and purpose summary."
+        ),
+    )
+    def search_symbols(
+        query: str, kind: str = "all", path: str = "./"
+    ) -> str:
+        """Search symbols by query string."""
+        target_dir = Path(path).resolve()
+        docgen_dir = _get_docgen_dir(target_dir)
+        if not docgen_dir.exists():
+            return (
+                f"Error: .docgen directory not found in {target_dir}. "
+                "Please run pystdoc_sync first."
+            )
+        db_path = docgen_dir / "index.db"
+        if not db_path.exists():
+            return "Error: index database (.docgen/index.db) not found."
+
+        db = DocgenDB(db_path)
+        try:
+            cur = db.conn.cursor()
+            q_str = f"%{query.strip().lower()}%"
+            k_prefix = kind.lower().strip()
+
+            sql = (
+                "SELECT m.unique_id, m.name, m.kind, m.rel_path, "
+                "m.line_start, m.line_end, m.fqdn, c.purpose "
+                "FROM symbols_metadata m "
+                "LEFT JOIN symbol_cache c ON m.unique_id = c.unique_id "
+                "WHERE (LOWER(m.name) LIKE ? "
+                "OR LOWER(COALESCE(m.fqdn, '')) LIKE ? "
+                "OR LOWER(COALESCE(c.purpose, '')) LIKE ?)"
+            )
+            params = [q_str, q_str, q_str]
+            if k_prefix in ("fn", "func", "function", "functions"):
+                sql += (
+                    " AND (LOWER(m.kind) LIKE '%func%' "
+                    "OR LOWER(m.kind) LIKE '%method%' "
+                    "OR LOWER(m.kind) LIKE '%fn%')"
+                )
+            elif k_prefix in ("type", "class", "types", "classes", "struct"):
+                sql += (
+                    " AND (LOWER(m.kind) LIKE '%class%' "
+                    "OR LOWER(m.kind) LIKE '%type%' "
+                    "OR LOWER(m.kind) LIKE '%struct%' "
+                    "OR LOWER(m.kind) LIKE '%enum%' "
+                    "OR LOWER(m.kind) LIKE '%interface%')"
+                )
+            elif k_prefix in ("var", "variable", "vars", "variables", "const"):
+                sql += (
+                    " AND (LOWER(m.kind) LIKE '%var%' "
+                    "OR LOWER(m.kind) LIKE '%const%' "
+                    "OR LOWER(m.kind) LIKE '%field%' "
+                    "OR LOWER(m.kind) LIKE '%member%')"
+                )
+
+            sql += " ORDER BY m.rel_path, m.line_start LIMIT 30"
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            if not rows:
+                return f"No symbols found matching query '{query}'."
+
+            results = []
+            for r in rows:
+                _, sname, skind, rpath, lstart, lend, fqdn, purpose = r
+                disp_name = fqdn or sname
+                p_text = f" - {purpose}" if purpose else ""
+                results.append(
+                    f"- **`{disp_name}`** (`{skind}`): "
+                    f"`{rpath}:{lstart}:{lend}`{p_text}"
+                )
+            return (
+                f"Found {len(results)} matching symbol(s) for '{query}':\n"
+                + "\n".join(results)
+            )
+        finally:
+            db.close()
 
     @mcp.tool(
         name="pystdoc_get_symbol",
@@ -128,11 +266,11 @@ def create_mcp_server() -> Any:
     @mcp.tool(
         name="pystdoc_get_design",
         description=(
-            "Get high-level architecture design documents ('overview', "
-            "'data_models', 'execution_model', 'readme', or module name)."
+            "Get high-level architecture design documents ('readme', "
+            "'overview', 'data_models', 'execution_model', or module name)."
         ),
     )
-    def get_design(section: str = "overview", path: str = "./") -> str:
+    def get_design(section: str = "readme", path: str = "./") -> str:
         """Get high-level architecture design document."""
         target_dir = Path(path).resolve()
         docgen_dir = _get_docgen_dir(target_dir)
@@ -145,9 +283,17 @@ def create_mcp_server() -> Any:
         design_dir = docgen_dir / "design"
         sec = section.lower().strip()
 
+        # Handle file paths passed as section
+        if "/" in sec or "\\" in sec or sec.endswith(
+            (".py", ".kt", ".java", ".c", ".cpp", ".h")
+        ):
+            sec_stem = Path(sec).stem
+        else:
+            sec_stem = sec
+
         if sec in ("readme", "summary", "project"):
             f = docgen_dir / "README.md"
-        elif sec in ("overview", "arch", "architecture"):
+        elif sec in ("overview", "arch", "architecture", "overview.md"):
             f = design_dir / "overview.md"
         elif sec in ("data_models", "data", "models", "schema"):
             f = design_dir / "data_models.md"
@@ -159,13 +305,28 @@ def create_mcp_server() -> Any:
             if not f.exists():
                 f = design_dir / "modules" / f"{sec}.md"
             if not f.exists():
+                f = design_dir / "modules" / f"{sec_stem}.md"
+            if not f.exists():
                 f = design_dir / f"{section}.md"
+            if not f.exists():
+                f = design_dir / f"{sec}.md"
 
         if f.exists() and f.is_file():
             return f.read_text(encoding="utf-8", errors="replace").strip()
+
+        available_modules = []
+        modules_dir = design_dir / "modules"
+        if modules_dir.exists():
+            available_modules = [m.stem for m in modules_dir.glob("*.md")]
+        mod_hint = (
+            f" Available module sections: {', '.join(available_modules)}."
+            if available_modules
+            else ""
+        )
         return (
             f"Design document section '{section}' not found in "
-            ".docgen/design/."
+            f".docgen/design/.{mod_hint} Valid standard sections are "
+            "'readme', 'overview', 'data_models', 'execution_model'."
         )
 
     @mcp.tool(
@@ -190,7 +351,7 @@ def create_mcp_server() -> Any:
         name="pystdoc_sync",
         description=(
             "Generate or update full documentation suite (.docgen/) for a "
-            "codebase using configured LLM."
+            "codebase using configured LLM, returning project summary."
         ),
     )
     def sync_codebase(
@@ -259,9 +420,20 @@ def create_mcp_server() -> Any:
                 language=lang,
                 allow_fallback=fallback,
             )
+
+            readme_file = target_dir / ".docgen" / "README.md"
+            readme_summary = ""
+            if readme_file.exists():
+                readme_summary = (
+                    "\n\n### Project Executive Summary (.docgen/README.md):\n"
+                    + readme_file.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).strip()
+                )
+
             return (
                 "Successfully synchronized documentation in "
-                f"{target_dir / '.docgen'}."
+                f"{target_dir / '.docgen'}.{readme_summary}"
             )
         except Exception as e:
             return f"Error during sync: {e}"

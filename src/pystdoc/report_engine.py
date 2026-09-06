@@ -199,25 +199,40 @@ Answer these 3 factual questions definitively in {norm_lang}
         "- [**Symbol & Source Code Index**](documents/)\n"
     )
 
-    default_readme = f"""# Project Overview & Executive Summary
+    proj_name = target_dir.name or "Project"
+    inferred_type = "Software Module / Application"
+    if any(
+        k in ui_snippets_str
+        for k in ("Activity", "Compose", "Android", "GUI", "View")
+    ):
+        inferred_type = "GUI Application"
+    elif "CLI" in overview_text or "main(" in overview_text:
+        inferred_type = "CLI Application"
+    elif module_files:
+        inferred_type = "Library / Module Package"
+
+    mod_names_str = (
+        ", ".join(f"`{mf.stem}`" for mf in module_files[:6])
+        if module_files
+        else "source modules"
+    )
+
+    default_readme = f"""# Project Overview & Executive Summary ({proj_name})
 
 ## 1. Software Classification & Purpose
-- **Type**: CLI Application
-- **Purpose**: Analyzes source code AST and call graphs to automatically
-  generate structured design documents and symbol documentation.
+- **Type**: {inferred_type}
+- **Purpose**: Provides functionality implemented across {len(module_files)} \
+key module(s) ({mod_names_str}).
 
 ## 2. Invocation & Usage Example
-```bash
-pystdoc --dir ./target_project/ --language {norm_lang}
-```
+Refer to the module interfaces and entry points described in documentation.
 
 ## 3. Core Features & Capabilities
-- **Codebase Analysis**: Deep symbol extraction (C/C++, Python, Java, Kotlin).
-- **Design Document Synthesis**: Automated synthesis of Data Models, etc.
+{modules_snippet_str}
 
 ## 4. How It Works (High-Level Architecture Story)
-Analyzes code structure using AST and call graphs, then synthesizes
-hierarchical documentation through multi-turn LLM reasoning.
+Modular software system structured into interconnected components with \
+topological dependency mapping.
 
 ## 5. Documentation Navigation (Detailed Design Links)
 - [**Architecture Overview (Overview)**](design/overview.md)
@@ -263,11 +278,7 @@ hierarchical documentation through multi-turn LLM reasoning.
             raise LLMError(
                 f"Failed to generate README document: {e}"
             ) from e
-        content = (
-            f"# Project Overview\n\n## 1. Purpose & Category\n"
-            f"Provides project documentation.\n\n"
-            f"## 5. Navigation\n{mod_links_str}\n"
-        )
+        content = default_readme
 
     elapsed = time.time() - start_t
     print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/README.md")
