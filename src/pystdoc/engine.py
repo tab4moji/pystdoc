@@ -2,11 +2,12 @@
 
 import concurrent.futures
 import fcntl
+import re
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from pystdoc.scanner import scan_files, write_files_list
 from pystdoc.hasher import compute_file_hash, compute_symbol_hash
@@ -69,6 +70,70 @@ class FileLock:
             finally:
                 self.fd.close()
                 self.fd = None
+
+
+def check_external_interface_changed(
+    old_cache: Optional[Dict[str, Any]],
+    new_sym: Any,
+) -> bool:
+    """Check if the external specification (contract/purpose/I/O) changed."""
+    if old_cache is None:
+        return True
+
+    def get_tokens(text: Optional[str]) -> Set[str]:
+        clean = re.sub(
+            r"[.,。、:：\-_\(\)（）「」『』`\"'\s\r\n\t]+", " ", text or ""
+        )
+        words = set(clean.lower().split())
+        # Add 2-grams for CJK strings
+        compact = "".join(clean.lower().split())
+        if len(compact) >= 2:
+            for i in range(len(compact) - 1):
+                words.add(compact[i:i+2])
+        return words
+
+    def normalize_spec_text(text: Optional[str]) -> str:
+        if not text:
+            return ""
+        return re.sub(
+            r"[\s\r\n\t\.,。、:：\-_\(\)（）「」『』`\"']", "", text.lower()
+        )
+
+    old_p = normalize_spec_text(old_cache.get("purpose"))
+    new_p = normalize_spec_text(new_sym.purpose)
+    old_in = normalize_spec_text(old_cache.get("inputs_note"))
+    new_in = normalize_spec_text(new_sym.inputs_note)
+    old_out = normalize_spec_text(old_cache.get("outputs_note"))
+    new_out = normalize_spec_text(new_sym.outputs_note)
+
+    # If I/O notes changed significantly
+    if old_in != new_in or old_out != new_out:
+        if bool(old_in) != bool(new_in) or bool(old_out) != bool(new_out):
+            return True
+        t_in1 = get_tokens(old_cache.get("inputs_note"))
+        t_in2 = get_tokens(new_sym.inputs_note)
+        if t_in1 and t_in2:
+            jaccard_in = len(t_in1 & t_in2) / max(len(t_in1 | t_in2), 1)
+            if jaccard_in < 0.5:
+                return True
+        t_out1 = get_tokens(old_cache.get("outputs_note"))
+        t_out2 = get_tokens(new_sym.outputs_note)
+        if t_out1 and t_out2:
+            jaccard_out = len(t_out1 & t_out2) / max(len(t_out1 | t_out2), 1)
+            if jaccard_out < 0.5:
+                return True
+
+    # Check purpose
+    if old_p == new_p:
+        return False
+    t1 = get_tokens(old_cache.get("purpose"))
+    t2 = get_tokens(new_sym.purpose)
+    if t1 and t2:
+        jaccard = len(t1 & t2) / max(len(t1 | t2), 1)
+        if jaccard >= 0.5:
+            return False
+
+    return True
 
 
 def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
@@ -399,11 +464,25 @@ def run_docgen(
                 docgen_docs_dir
                 / f"{node.rel_path.as_posix()}.{k_pfx}.{sym_id_str}.md"
             )
+            alt_sym_doc = (
+                docgen_docs_dir
+                / f"{node.rel_path.as_posix()}.{k_pfx}.{sym.name}.md"
+            )
             expected_file_doc = (
                 docgen_docs_dir / f"{node.rel_path.as_posix()}.md"
             )
+            cache_key = f"{node.unique_id}::{norm_lang}"
+            has_cache = (
+                db.load_symbol_cache(cache_key) is not None
+                or db.load_symbol_cache(node.unique_id) is not None
+            )
+            sym_file_exists = (
+                expected_sym_doc.exists() or alt_sym_doc.exists()
+            )
             doc_file_missing = (
-                not expected_sym_doc.exists() or not expected_file_doc.exists()
+                not has_cache
+                or not expected_file_doc.exists()
+                or not sym_file_exists
             )
 
             is_sym_changed = db.update_symbol_hash(
@@ -521,12 +600,8 @@ def run_docgen(
 
                 with dirty_lock:
                     actually_updated_symbol_ids.add(node.unique_id)
-                    has_external_change = (
-                        old_cache is None
-                        or old_cache.get("purpose") != sym.purpose
-                        or old_cache.get("inputs_note") != sym.inputs_note
-                        or old_cache.get("outputs_note") != sym.outputs_note
-                        or old_cache.get("overview") != sym.overview
+                    has_external_change = check_external_interface_changed(
+                        old_cache, sym
                     )
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
@@ -609,12 +684,8 @@ def run_docgen(
 
                 with dirty_lock:
                     actually_updated_symbol_ids.add(node.unique_id)
-                    has_external_change = (
-                        old_cache is None
-                        or old_cache.get("purpose") != sym.purpose
-                        or old_cache.get("inputs_note") != sym.inputs_note
-                        or old_cache.get("outputs_note") != sym.outputs_note
-                        or old_cache.get("overview") != sym.overview
+                    has_external_change = check_external_interface_changed(
+                        old_cache, sym
                     )
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
@@ -795,7 +866,13 @@ def run_docgen(
                 v_docgen_docs_dir
                 / f"{v_rel.as_posix()}.{v_k_pfx}.{v_sym_id_str}.md"
             )
-            v_doc_missing = not v_expected_sym_doc.exists()
+            v_alt_sym_doc = (
+                v_docgen_docs_dir
+                / f"{v_rel.as_posix()}.{v_k_pfx}.{v_sym.name}.md"
+            )
+            v_doc_missing = (
+                not v_expected_sym_doc.exists() and not v_alt_sym_doc.exists()
+            )
 
             # Check if this node is downstream of any updated symbols
             is_self_updated = (

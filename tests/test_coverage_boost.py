@@ -1418,6 +1418,138 @@ class TestCoverageBoost(unittest.TestCase):
         sym_records = cur.fetchall()
         self.assertTrue(any("helper" in r["unique_id"] for r in sym_records))
 
+    def test_check_external_interface_changed_branches(self):
+        """Test all branches of check_external_interface_changed."""
+        from pystdoc.engine import check_external_interface_changed
+        from pystdoc.symbols import Symbol
+
+        sym = Symbol(
+            name="test_fn",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            purpose="Calculates total sum of inputs",
+            inputs_note="List of integers",
+            outputs_note="Total integer sum",
+            overview="Sums numbers",
+        )
+
+        # 1. None old cache -> True
+        self.assertTrue(check_external_interface_changed(None, sym))
+
+        # 2. Identical cache -> False
+        old_same = {
+            "purpose": "Calculates total sum of inputs.",
+            "inputs_note": "List of integers.",
+            "outputs_note": "Total integer sum.",
+            "overview": "Sums numbers.",
+        }
+        self.assertFalse(check_external_interface_changed(old_same, sym))
+
+        # 3. Slightly rephrased purpose (Jaccard >= 0.65) -> False
+        old_rephrased = {
+            "purpose": "Calculates total sum of input values",
+            "inputs_note": "List of integers",
+            "outputs_note": "Total integer sum",
+            "overview": "Sums numbers",
+        }
+        self.assertFalse(check_external_interface_changed(old_rephrased, sym))
+
+        # 4. Completely different purpose -> True
+        old_diff_p = {
+            "purpose": "Deletes all database files completely",
+            "inputs_note": "List of integers",
+            "outputs_note": "Total integer sum",
+            "overview": "Sums numbers",
+        }
+        self.assertTrue(check_external_interface_changed(old_diff_p, sym))
+
+        # 5. Changed inputs_note (empty vs non-empty, and different) -> True
+        old_empty_in = {
+            "purpose": "Calculates total sum of inputs",
+            "inputs_note": "",
+            "outputs_note": "Total integer sum",
+            "overview": "Sums numbers",
+        }
+        self.assertTrue(check_external_interface_changed(old_empty_in, sym))
+
+        old_diff_in = {
+            "purpose": "Calculates total sum of inputs",
+            "inputs_note": "Database connection pool",
+            "outputs_note": "Total integer sum",
+            "overview": "Sums numbers",
+        }
+        self.assertTrue(check_external_interface_changed(old_diff_in, sym))
+
+        # 6. Changed outputs_note -> True
+        old_empty_out = {
+            "purpose": "Calculates total sum of inputs",
+            "inputs_note": "List of integers",
+            "outputs_note": "",
+            "overview": "Sums numbers",
+        }
+        self.assertTrue(check_external_interface_changed(old_empty_out, sym))
+
+        old_diff_out = {
+            "purpose": "Calculates total sum of inputs",
+            "inputs_note": "List of integers",
+            "outputs_note": "HTTP response string",
+            "overview": "Sums numbers",
+        }
+        self.assertTrue(check_external_interface_changed(old_diff_out, sym))
+
+        # 7. Japanese rephrased and diff
+        ja_sym = Symbol(
+            name="calc_ja",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            purpose="入力値の合計値を計算して返す。",
+            inputs_note="整数のリスト",
+            outputs_note="計算結果の合計整数値",
+            overview="計算処理の概要",
+        )
+        old_ja_same = {
+            "purpose": "入力値の合計値を計算して返す",
+            "inputs_note": "整数のリスト",
+            "outputs_note": "計算結果の合計整数値",
+            "overview": "計算処理の概要",
+        }
+        self.assertFalse(check_external_interface_changed(old_ja_same, ja_sym))
+
+        old_ja_diff = {
+            "purpose": "データベースから全レコードを削除する",
+            "inputs_note": "整数のリスト",
+            "outputs_note": "計算結果の合計整数値",
+            "overview": "計算処理の概要",
+        }
+        self.assertTrue(check_external_interface_changed(old_ja_diff, ja_sym))
+
+        # 8. Empty purpose/notes
+        empty_sym = Symbol(
+            name="empty_fn", kind="function", line_start=1, line_end=1
+        )
+        self.assertFalse(check_external_interface_changed({}, empty_sym))
+
+        # 9. One-sided empty inputs/outputs to trigger get_tokens(None)
+        partial_sym = Symbol(
+            name="p_fn",
+            kind="function",
+            line_start=1,
+            line_end=1,
+            purpose="Some purpose",
+            inputs_note=None,
+            outputs_note=None,
+        )
+        old_partial = {
+            "purpose": "Different purpose",
+            "inputs_note": "Some input",
+            "outputs_note": "Some output",
+        }
+        self.assertTrue(
+            check_external_interface_changed(old_partial, partial_sym)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
