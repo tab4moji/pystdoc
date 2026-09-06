@@ -59,6 +59,13 @@ class MCPWatcherManager:
                     workers = cfg.get("concurrency", 1)
                     fallback = cfg.get("allow_fallback", False)
 
+                    print(
+                        f"[pystdoc MCP] Change detected! Auto-syncing: "
+                        f"{target_dir}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
                     # 1. docgen
                     run_docgen(
                         target_dir=target_dir,
@@ -102,9 +109,15 @@ class MCPWatcherManager:
                         allow_fallback=fallback,
                         db=db,
                     )
+                    print(
+                        f"[pystdoc MCP] Auto-sync finished successfully for "
+                        f"{target_dir}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 except Exception as e:
                     print(
-                        f"[MCP Auto-Sync Error for {target_dir}]: {e}",
+                        f"[pystdoc MCP Auto-Sync Error for {target_dir}]: {e}",
                         file=sys.stderr,
                         flush=True,
                     )
@@ -140,9 +153,21 @@ def create_mcp_server(
     watcher_mgr: Optional[MCPWatcherManager] = None
     if auto_watch:
         watcher_mgr = MCPWatcherManager()
-        init_dir = (target_dir or Path.cwd()).resolve()
-        if init_dir.exists() and init_dir.is_dir():
-            watcher_mgr.watch_directory(init_dir)
+        import os
+        candidates = []
+        if target_dir:
+            candidates.append(target_dir)
+        for env_k in ("OPENCODE_WORKSPACE", "WORKSPACE_DIR", "PWD"):
+            val = os.environ.get(env_k)
+            if val:
+                candidates.append(Path(val))
+        candidates.append(Path.cwd())
+
+        for c in candidates:
+            c_res = c.resolve()
+            if c_res.exists() and c_res.is_dir():
+                watcher_mgr.watch_directory(c_res)
+                break
 
     def _ensure_watching(p: Path) -> None:
         if watcher_mgr is not None and p.exists() and p.is_dir():

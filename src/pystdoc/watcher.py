@@ -69,11 +69,17 @@ class DNotifyWatcher:
         for rel in matched_files:
             watched_dirs.add((self.target_dir / rel).parent)
 
+        pid = os.getpid()
         for d in watched_dirs:
             d_str = str(d)
             if d_str not in self._dir_fds and d.exists() and d.is_dir():
                 try:
                     fd = os.open(d_str, os.O_RDONLY)
+                    if hasattr(fcntl, "F_SETOWN"):
+                        try:
+                            fcntl.fcntl(fd, fcntl.F_SETOWN, pid)
+                        except Exception:
+                            pass
                     fcntl.fcntl(fd, fcntl.F_NOTIFY, dn_events)
                     self._dir_fds[d_str] = fd
                 except Exception:
@@ -175,20 +181,22 @@ class DNotifyWatcher:
                     cur_time = time.strftime('%H:%M:%S')
                     self._log(
                         f"\n[{cur_time}] "
-                        f"Source change detected! Starting auto-sync..."
+                        f"[pystdoc watch] Source change detected in "
+                        f"{self.target_dir}! Starting auto-sync..."
                     )
                     try:
                         self.on_change()
                     except Exception as e:
                         if not self.quiet:
                             print(
-                                f"Error during auto-sync: {e}",
+                                f"[pystdoc watch error]: {e}",
                                 file=sys.stderr,
                                 flush=True,
                             )
                     self._log(
                         f"[{time.strftime('%H:%M:%S')}] "
-                        f"Auto-sync complete. Resuming watch...\n"
+                        f"[pystdoc watch] Auto-sync complete for "
+                        f"{self.target_dir}. Resuming watch...\n"
                     )
                     self._file_snapshots = self._get_current_snapshot()
                     self._setup_dnotify()
