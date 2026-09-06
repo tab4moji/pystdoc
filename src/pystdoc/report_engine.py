@@ -1,6 +1,7 @@
 """Report Engine: Synthesizes high-level project README (.docgen/README.md)."""
 
 import hashlib
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,7 @@ def generate_readme_doc(
     norm_lang = normalize_language(language)
     docgen_dir = target_dir / ".docgen"
     design_dir = docgen_dir / "design"
+    docs_dir = docgen_dir / "documents"
     out_file = docgen_dir / "README.md"
 
     # 1. Read design overview
@@ -79,11 +81,29 @@ def generate_readme_doc(
     )
     mod_links_str = "\n".join(module_links) if module_links else "  - (None)"
 
+    # 5. Extract UI hints from symbol documents bottom-up
+    symbol_ui_snippets = []
+    if docs_dir.exists():
+        for sf in sorted(list(docs_dir.glob("*.md")))[:15]:
+            s_text = sf.read_text(encoding="utf-8", errors="replace")
+            m_ui_role = re.search(
+                r"- \*\*Interaction Specification\*\*:\s*([^\n]+)", s_text
+            )
+            if m_ui_role:
+                symbol_ui_snippets.append(
+                    f"- `{sf.name}`: {m_ui_role.group(1).strip()}"
+                )
+    ui_snippets_str = (
+        "\n".join(symbol_ui_snippets[:8])
+        if symbol_ui_snippets
+        else "No specific symbol UI annotations"
+    )
+
     # Compute cache key and input hash
     combined_input = (
         f"{norm_lang}\n{overview_text[:800]}\n"
         f"{data_models_text[:500]}\n{exec_model_text[:500]}\n"
-        f"{modules_snippet_str}"
+        f"{modules_snippet_str}\n{ui_snippets_str}"
     )
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"report::readme::{norm_lang}"
@@ -99,16 +119,15 @@ def generate_readme_doc(
     sys_msg = (
         "You are an objective senior code analyst and technical writer. "
         "Strictly prohibit marketing fluff, promotional buzzwords, or "
-        "exaggerated praise (e.g. avoid 'mathematical rigor', 'robust', "
-        "'flexible', 'next-gen', 'cutting-edge'). Report purely objective "
-        f"facts derived directly from code in concise, plain {norm_lang}. "
+        "exaggerated praise. Report purely objective facts derived "
+        f"directly from code in concise, plain {norm_lang}. "
         "Always write in a definitive tone (言い切り型: 〜である / "
         "〜を提供する. Never use ambiguous guesses like 'seems to be' or "
         "'〜と思われる')."
     )
 
     turn1_prompt = f"""We are analyzing a codebase. Below are excerpts
-from architectural models and module summaries.
+from architectural models, module summaries, and bottom-up UI annotations.
 
 ### Architecture Overview (Excerpt):
 {overview_text[:800]}
@@ -121,6 +140,9 @@ from architectural models and module summaries.
 
 ### Modules Overview:
 {modules_snippet_str}
+
+### Bottom-Up UI Annotations:
+{ui_snippets_str}
 
 Answer these 3 factual questions definitively in {norm_lang}
 (no fluff, use assertive sentences):
@@ -135,12 +157,12 @@ Answer these 3 factual questions definitively in {norm_lang}
 """
 
     turn2_prompt = (
-        f"Based on the above facts, answer in {norm_lang} "
-        "(no fluff, use assertive sentences):\n"
-        "1. **Invocation & Execution Syntax**: If it is a CLI tool, provide\n"
-        "   the exact command-line invocation syntax with its options and\n"
-        "   arguments derived from entry points. If it is a Library or\n"
-        "   GUI/TUI app, provide a realistic execution or API code snippet.\n"
+        f"Based on the above facts and bottom-up symbol UI roles, "
+        f"answer in {norm_lang} (no fluff, use assertive sentences):\n"
+        "1. **Reconsidered Invocation & Usage**: Based on entry points and "
+        "parsed options, provide the exact invocation command line syntax "
+        "with flags/arguments (if CLI), or concrete UI user interaction / "
+        "API usage example (if GUI/TUI/Library).\n"
         "2. **Input and Output Data**: Specifically what input data format\n"
         "   is accepted, and what concrete output is produced?\n"
     )

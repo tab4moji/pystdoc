@@ -261,6 +261,21 @@ class TestCLI(unittest.TestCase):
             reportgen_main(["desc"])
         self.assertEqual(cm.exception.code, 1)
 
+    def test_reportgen_cli_llm_unavailable_exit(self):
+        test_args = [
+            "reportgen",
+            "--dir", str(self.test_dir),
+            "--host", "http://invalid-host:1234",
+        ]
+        with patch("sys.argv", test_args):
+            with patch(
+                "pystdoc.llm_client.LLMClient.check_availability",
+                return_value=False,
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main()
+                self.assertEqual(cm.exception.code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

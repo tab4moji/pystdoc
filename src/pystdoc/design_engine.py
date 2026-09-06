@@ -12,6 +12,10 @@ from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.ui_detector import (
+    annotate_documents_with_ui_context,
+    detect_ui_type,
+)
 
 
 def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
@@ -27,6 +31,7 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
         "callees": [],
         "referencing_funcs": [],
         "context": "",
+        "ui_role": "",
         "raw_text": text,
     }
 
@@ -88,6 +93,16 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
         data["referencing_funcs"] = [
             r for r in ref_lines if r not in ("None", "none")
         ]
+
+    # 4. Extract UI & Interaction Role
+    m_ui = re.search(
+        r"## .*(?:UI & Interaction Role|UI・ユーザー操作における役割).*\n"
+        r"([\s\S]*?)(?=\n## |\Z)",
+        text,
+        re.IGNORECASE,
+    )
+    if m_ui:
+        data["ui_role"] = m_ui.group(1).strip()
 
     return data
 
@@ -371,15 +386,17 @@ def generate_execution_model_doc(
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
+    ui_info: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Step 2: Generate execution_model.md with SQLite cache & Map-Reduce."""
     norm_lang = normalize_language(language)
     funcs_raw = []
     for d in fn_docs:
         callees_str = ", ".join(d["callees"][:3]) if d["callees"] else "None"
+        ui_extra = f" / UI Role: {d['ui_role']}" if d.get("ui_role") else ""
         line_desc = (
             f"- Function `{d['file_name']}` (Signature: `{d['signature']}`): "
-            f"Purpose: {d['purpose'][:120]} / Callees: {callees_str}"
+            f"Purpose: {d['purpose'][:120]}{ui_extra} / Callees: {callees_str}"
         )
         funcs_raw.append(line_desc)
 
@@ -404,6 +421,17 @@ def generate_execution_model_doc(
         allow_fallback=allow_fallback,
     )
 
+    ui_context_text = ""
+    if ui_info and ui_info.get("has_ui"):
+        ui_t = ui_info.get("ui_type", "CLI")
+        ui_f = ui_info.get("framework", "")
+        ui_context_text = (
+            f"\n### Detected UI & Interaction Framework:\n"
+            f"- User Interface Type: `{ui_t}` ({ui_f})\n"
+            f"- Account for user interactions, input dispatching, and UI "
+            f"lifecycle.\n"
+        )
+
     prompt = f"""Please analyze function call graphs and create
 a factual "System Execution Model & Runtime Architecture" in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
@@ -411,7 +439,7 @@ Tone rule: Strictly objective, concise, and architectural. Absolutely NO
 promotional words, praise, or marketing fluff (e.g., avoid "robust",
 "flexible", "seamless", "cutting-edge", "優れた", "堅牢な"). State the
 concrete runtime execution pattern, entry points, dispatching, and flow.
-
+{ui_context_text}
 ### Function Call Structures:
 {reduced_funcs_summary}
 
@@ -599,6 +627,7 @@ def generate_overview_doc(
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
+    ui_info: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Step 4: Generate overview.md with SQLite cache & Mermaid synthesis."""
     norm_lang = normalize_language(language)
@@ -636,6 +665,16 @@ def generate_overview_doc(
         allow_fallback=allow_fallback,
     )
 
+    ui_overview_text = ""
+    if ui_info and ui_info.get("has_ui"):
+        ui_overview_text = (
+            f"\n### User Interface Structure:\n"
+            f"- Primary UI Pattern: `{ui_info.get('ui_type')}` "
+            f"({ui_info.get('framework')})\n"
+            f"- Reflect user interaction layer in Mermaid diagram and "
+            f"overview.\n"
+        )
+
     prompt = f"""Please synthesize a concise architecture overview
 in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
@@ -644,7 +683,7 @@ promotional words, praise, or marketing fluff (e.g., avoid "robust",
 "flexible", "powerful", "cutting-edge", "優れた", "堅牢な", "高度な").
 Clearly and concisely state the overall architecture pattern (e.g. MVVM,
 Layered, Pipeline, Clean Architecture), component roles, and interactions.
-
+{ui_overview_text}
 ### Data Models Summary:
 {data_models_content[:600]}
 
@@ -772,6 +811,21 @@ def run_design_generation(
     parsed_docs = [parse_symbol_doc(f) for f in all_md_files if f.is_file()]
     print(f"[1/5] Loaded parsed documents: {len(parsed_docs)} items")
 
+    # Bottom-up UI inference & symbol doc annotation
+    ui_info = detect_ui_type(parsed_docs)
+    annotated = annotate_documents_with_ui_context(
+        docs_dir, ui_info, language=norm_lang
+    )
+    if annotated > 0:
+        parsed_docs = [
+            parse_symbol_doc(f) for f in all_md_files if f.is_file()
+        ]
+        print(
+            f"       -> [UI Context Bottom-Up Annotated]: "
+            f"{ui_info['ui_type']} ({ui_info['framework']}) "
+            f"across {annotated} symbol docs"
+        )
+
     type_docs = [
         d
         for d in parsed_docs
@@ -818,6 +872,7 @@ def run_design_generation(
         language=norm_lang,
         force=force,
         allow_fallback=allow_fallback,
+        ui_info=ui_info,
     )
 
     # Step 3
@@ -853,6 +908,7 @@ def run_design_generation(
         language=norm_lang,
         force=force,
         allow_fallback=allow_fallback,
+        ui_info=ui_info,
     )
 
     db.close()
