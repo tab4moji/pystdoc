@@ -29,7 +29,7 @@ class TestReportgen(unittest.TestCase):
             language="English",
             allow_fallback=True,
         )
-        self.assertIn("## 1. What Does This Project Do?", content_en)
+        self.assertIn("## 1. Software Classification & Purpose", content_en)
 
         # Japanese option
         content_ja = generate_readme_doc(
@@ -38,7 +38,7 @@ class TestReportgen(unittest.TestCase):
             language="Japanese",
             allow_fallback=True,
         )
-        self.assertIn("## 1. What Does This Project Do?", content_ja)
+        self.assertIn("## 1. Software Classification & Purpose", content_ja)
 
     def test_run_full_pipeline_no_llm(self):
         sample_file = self.test_dir / "main.c"

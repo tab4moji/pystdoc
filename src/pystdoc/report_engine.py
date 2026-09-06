@@ -101,7 +101,10 @@ def generate_readme_doc(
         "Strictly prohibit marketing fluff, promotional buzzwords, or "
         "exaggerated praise (e.g. avoid 'mathematical rigor', 'robust', "
         "'flexible', 'next-gen', 'cutting-edge'). Report purely objective "
-        f"facts derived directly from code in concise, plain {norm_lang}."
+        f"facts derived directly from code in concise, plain {norm_lang}. "
+        "Always write in a definitive tone (言い切り型: 〜である / "
+        "〜を提供する. Never use ambiguous guesses like 'seems to be' or "
+        "'〜と思われる')."
     )
 
     turn1_prompt = f"""We are analyzing a codebase. Below are excerpts
@@ -119,20 +122,25 @@ from architectural models and module summaries.
 ### Modules Overview:
 {modules_snippet_str}
 
-Answer these 3 factual questions objectively in {norm_lang} (no buzzwords):
-1. **Project Category & Language**: What kind of software is this, and what
-   is its concrete role? (e.g. C CLI tool for hashing, Python SDK for API,
-   C++ matrix math routines, minimal prototype, etc.)
-2. **Implementation Status & Scale**: What is the factual state of the code?
-   (e.g. Small prototype/study, full-featured CLI, work-in-progress library)
-3. **Core Essence (1 Fact-Based Sentence)**: In plain, everyday terms,
-   what does it actually do with inputs and outputs?
+Answer these 3 factual questions definitively in {norm_lang}
+(no fluff, use assertive sentences):
+1. **Software Classification (Application vs Library)**:
+   - State definitively whether this is an Application or a Library.
+   - If it is an Application, specify the exact user interface presence:
+     GUI, TUI, or CLI.
+2. **Implementation Status & Role**: What is the factual role and state of
+   the code (e.g. CLI tool, Android GUI app, backend library)?
+3. **Core Functionality**: In plain terms, what does it actually do with
+   inputs and outputs? (1 assertive sentence)
 """
 
     turn2_prompt = (
-        f"Based on the above facts, answer in {norm_lang} (no fluff):\n"
-        "1. **Concrete Usage & Execution**: Provide a realistic command-line\n"
-        "   or API call example based directly on the entry points.\n"
+        f"Based on the above facts, answer in {norm_lang} "
+        "(no fluff, use assertive sentences):\n"
+        "1. **Invocation & Execution Syntax**: If it is a CLI tool, provide\n"
+        "   the exact command-line invocation syntax with its options and\n"
+        "   arguments derived from entry points. If it is a Library or\n"
+        "   GUI/TUI app, provide a realistic execution or API code snippet.\n"
         "2. **Input and Output Data**: Specifically what input data format\n"
         "   is accepted, and what concrete output is produced?\n"
     )
@@ -141,13 +149,19 @@ Answer these 3 factual questions objectively in {norm_lang} (no buzzwords):
         "Synthesize a concise, fact-based executive README "
         f"(.docgen/README.md) in {norm_lang}.\n"
         f"Output Language: {norm_lang} (Write all text in {norm_lang}).\n"
-        "Tone rule: Strictly objective and concise. No promotional words.\n\n"
+        "Tone rule: Strictly objective, concise, and definitive (言い切り型: "
+        "〜である / 〜を提供する. Absolutely no vague expressions or praise).\n\n"
         "Structure the Markdown exactly as follows:\n"
         "# Project Overview & Executive Summary\n\n"
-        "## 1. What Does This Project Do? (Purpose & Category)\n"
-        "(Factual 2-3 sentence summary: tool type, state, and function)\n\n"
-        "## 2. Typical Usage & Execution Example\n"
-        "(Concrete CLI command or API usage example with input/output)\n\n"
+        "## 1. Software Classification & Purpose\n"
+        "- **Type**: (State definitively whether this is an Application "
+        "[GUI / TUI / CLI] or a Library in 1 assertive sentence)\n"
+        "- **Purpose**: (Factual summary: what this software does with "
+        "inputs and outputs, written in definitive tone)\n\n"
+        "## 2. Invocation & Usage Example\n"
+        "(If CLI: Exact command-line invocation syntax with options/arguments "
+        "and description. If Library/GUI: Concrete execution or API call "
+        "example)\n\n"
         "## 3. Core Features & Capabilities\n"
         "(Concise bullet points of implemented features and interfaces)\n\n"
         "## 4. How It Works (High-Level Architecture Story)\n"
@@ -165,16 +179,18 @@ Answer these 3 factual questions objectively in {norm_lang} (no buzzwords):
 
     default_readme = f"""# Project Overview & Executive Summary
 
-## 1. What Does This Project Do? (Purpose & Category)
-This project provides automated high-precision source code analysis.
+## 1. Software Classification & Purpose
+- **Type**: CLI Application
+- **Purpose**: Analyzes source code AST and call graphs to automatically
+  generate structured design documents and symbol documentation.
 
-## 2. Typical Usage & Execution Example
+## 2. Invocation & Usage Example
 ```bash
 pystdoc --dir ./target_project/ --language {norm_lang}
 ```
 
 ## 3. Core Features & Capabilities
-- **Codebase Analysis**: Deep symbol extraction (C/C++, Python, Shell).
+- **Codebase Analysis**: Deep symbol extraction (C/C++, Python, Java, Kotlin).
 - **Design Document Synthesis**: Automated synthesis of Data Models, etc.
 
 ## 4. How It Works (High-Level Architecture Story)
