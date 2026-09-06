@@ -190,8 +190,11 @@ def hierarchical_reduce_summaries(
 
         grp_info = f"(Group {idx}/{len(chunks)})"
         prompt = f"""Please analyze {category_title} {grp_info}
-and create a concise intermediate summary (300-500 words) in {language}.
+and create a concise, factual summary (200-400 words) in {language}.
 Output Language: {language} (Write all summary text in {language}).
+Tone rule: Strictly objective, concise, and architectural. Absolutely NO
+promotional words, praise, or marketing fluff. State concrete
+architectural patterns, roles, and data flow directly.
 
 ### Target Items:
 {chunk_text}
@@ -199,8 +202,8 @@ Output Language: {language} (Write all summary text in {language}).
 Output as Markdown bullet points in {language}:"""
 
         sys_msg = (
-            f"You are a principal software architect. "
-            f"You output concise summaries in {language}."
+            f"You are an objective software architect. "
+            f"You output concise, strictly factual summaries in {language}."
         )
         messages = [
             {"role": "system", "content": sys_msg},
@@ -292,8 +295,12 @@ def generate_data_models_doc(
     )
 
     prompt = f"""Please analyze aggregated types and variables/fields,
-and create a "Data Models & Data Structure Design" doc in {norm_lang}.
+and create a factual "Data Models & Data Structure Design" doc in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
+Tone rule: Strictly objective, concise, and architectural. Absolutely NO
+promotional words, praise, or marketing fluff (e.g., avoid "robust",
+"flexible", "powerful", "cutting-edge", "優れた", "堅牢な"). State concrete
+data structures, their responsibilities, and how data moves through the system.
 
 ### Defined Types:
 {reduced_types_summary}
@@ -304,27 +311,28 @@ Output Language: {norm_lang} (Write all text in {norm_lang}).
 Structure the Markdown as follows:
 # Data Structure Design & Data Models
 
-## 1. Design Intent & Core Philosophy
-(Explain overall data architecture philosophy and domain abstractions)
+## 1. Architectural Role & Design Intent
+(Concise 2-3 sentences: what domain models exist and their concrete role)
 
 ## 2. Core Data Structures
-(Table/list of structs, classes, enums with responsibilities and rationale)
+(Table/bullets of structs/classes/enums with fields and factual roles)
 
-## 3. Data Lifecycle & Passing Flow
-(Lifecycle explanation: creation, propagation, and mutation/destruction)
+## 3. Data Lifecycle & Flow
+(Factual flow: instantiation, mutations, parameter passing, and cleanup)
 
-## 4. Data Integrity & Invariants
-(Constraints, valid state transitions, and concurrency guarantees)
+## 4. Constraints & State Invariants
+(Concrete validations, state constraints, and concurrency rules)
 """
 
     default_data_models = (
         "# Data Structure Design & Data Models\n\n"
-        "## 1. Design Intent & Core Philosophy\n"
-        "Provides core data structure definitions.\n"
+        "## 1. Architectural Role & Design Intent\n"
+        "Provides core data structure definitions and domain models.\n"
     )
     sys_msg = (
-        f"You are a principal software architect. "
-        f"Write detailed architectural documentation in {norm_lang}."
+        f"You are an objective software architect. "
+        f"Write concise, strictly factual architectural "
+        f"documentation in {norm_lang}."
     )
     messages = [
         {"role": "system", "content": sys_msg},
@@ -397,8 +405,12 @@ def generate_execution_model_doc(
     )
 
     prompt = f"""Please analyze function call graphs and create
-a comprehensive "System Execution Model & Runtime Architecture" in {norm_lang}.
+a factual "System Execution Model & Runtime Architecture" in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
+Tone rule: Strictly objective, concise, and architectural. Absolutely NO
+promotional words, praise, or marketing fluff (e.g., avoid "robust",
+"flexible", "seamless", "cutting-edge", "優れた", "堅牢な"). State the
+concrete runtime execution pattern, entry points, dispatching, and flow.
 
 ### Function Call Structures:
 {reduced_funcs_summary}
@@ -406,27 +418,28 @@ Output Language: {norm_lang} (Write all text in {norm_lang}).
 Structure the Markdown as follows:
 # System Execution Model & Runtime Architecture
 
-## 1. Design Intent & Execution Paradigm
-(Overall runtime model, execution paradigm, and design rationale)
+## 1. Runtime Architecture Pattern
+(Concise 2-3 sentences: identify concrete pattern e.g. MVVM, Event-Driven)
 
-## 2. Architectural Patterns
-(Event-driven, batch execution, pipeline, client-server, or main-loop)
+## 2. Execution Flow from Entry Point to Termination
+(Step-by-step sequence: startup, initialization, main loop, and teardown)
 
-## 3. Control Flow from Entry Point to Termination
-(System bootstrap, initialization, dispatching, and teardown flow)
+## 3. Concurrency, Asynchrony & Lifecycle
+(Concrete thread model, coroutines/async tasks, and cleanup handling)
 
-## 4. Concurrency, Asynchrony & Error Resilience
-(Thread-safety, async I/O, error recovery, and failure modes)
+## 4. Error Handling & Failure Modes
+(Exception propagation, error returns, recovery, and failure boundaries)
 """
 
     default_exec_model = (
         "# System Execution Model & Runtime Architecture\n\n"
-        "## 1. Design Intent & Execution Paradigm\n"
-        "Provides system execution flow.\n"
+        "## 1. Runtime Architecture Pattern\n"
+        "Provides system execution flow and runtime architecture.\n"
     )
     sys_msg = (
-        f"You are a principal software architect. "
-        f"Write detailed architectural documentation in {norm_lang}."
+        f"You are an objective software architect. "
+        f"Write concise, strictly factual execution model "
+        f"documentation in {norm_lang}."
     )
     messages = [
         {"role": "system", "content": sys_msg},
@@ -507,8 +520,11 @@ def generate_module_docs(
         )
 
         prompt = f"""Please analyze elements in module `{mod_name}`
-and create a comprehensive module design in {norm_lang}.
+and create a concise, factual module design in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
+Tone rule: Strictly objective, concise, and architectural. Absolutely NO
+promotional words, praise, or marketing fluff. State the module's exact
+responsibilities, public interfaces, and component interactions directly.
 
 ### Module Name: `{mod_name}`
 ### Module Elements:
@@ -517,27 +533,29 @@ Output Language: {norm_lang} (Write all text in {norm_lang}).
 Structure the Markdown as follows:
 # Module Design: `{mod_name}`
 
-## 1. Design Intent & Responsibilities
-(Core responsibilities and rationale for module `{mod_name}`)
+## 1. Module Responsibility & Role
+(Concise 2-3 sentences: what concrete responsibility this module has)
 
-## 2. Public Interfaces & Provided Capabilities
-(Public functions, classes, types, and exported symbols)
+## 2. Public Interfaces & Exported Symbols
+(List/table of public functions, classes, and types with their exact roles)
 
-## 3. Internal Architecture & Data Flow
-(Internal data transformation and computation pipelines)
+## 3. Internal Data Flow & Processing
+(Factual flow of data processing and state transformation in this module)
 
-## 4. Dependencies & Interactions
-(Interactions with upstream and downstream modules)
+## 4. Dependencies & Inter-Module Interactions
+(Direct dependencies: upstream caller modules and downstream callee modules)
 """
 
         default_mod_doc = (
             f"# Module Design: `{mod_name}`\n\n"
-            "## 1. Design Intent & Responsibilities\n"
-            f"Provides capabilities for `{mod_name}`.\n"
+            "## 1. Module Responsibility & Role\n"
+            f"Defines responsibilities and public interfaces for "
+            f"module `{mod_name}`.\n"
         )
         sys_msg = (
-            f"You are a principal software architect. "
-            f"Write clean module documentation in {norm_lang}."
+            f"You are an objective software architect. "
+            f"Write concise, strictly factual module "
+            f"documentation in {norm_lang}."
         )
         messages = [
             {"role": "system", "content": sys_msg},
@@ -618,8 +636,14 @@ def generate_overview_doc(
         allow_fallback=allow_fallback,
     )
 
-    prompt = f"""Please synthesize architecture overview in {norm_lang}.
+    prompt = f"""Please synthesize a concise architecture overview
+in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
+Tone rule: Strictly objective, concise, and architectural. Absolutely NO
+promotional words, praise, or marketing fluff (e.g., avoid "robust",
+"flexible", "powerful", "cutting-edge", "優れた", "堅牢な", "高度な").
+Clearly and concisely state the overall architecture pattern (e.g. MVVM,
+Layered, Pipeline, Clean Architecture), component roles, and interactions.
 
 ### Data Models Summary:
 {data_models_content[:600]}
@@ -631,19 +655,23 @@ Output Language: {norm_lang} (Write all text in {norm_lang}).
 {reduced_modules_overview}
 
 Requirements:
-1. Section "## 1. Architectural Overview & Design Philosophy" at the top.
-2. Include a clean Mermaid Diagram (```mermaid ... ```) for data flow.
+1. Section "## 1. Architecture Pattern & System Overview" at the top
+   (Concise summary of architecture pattern and core layers/components).
+2. Include a clean Mermaid Diagram (```mermaid ... ```) depicting the
+   actual component architecture and data/control flow.
 3. Link index to details (data_models.md, execution_model.md, modules/).
 """
 
     default_overview = (
         "# System Architecture Overview\n\n"
-        "## 1. Architectural Overview & Design Philosophy\n"
-        "Provides overall system architectural design.\n"
+        "## 1. Architecture Pattern & System Overview\n"
+        "Provides overall system architectural design and component "
+        "structure.\n"
     )
     sys_msg = (
-        f"You are a principal software architect. "
-        f"Write clean overview documentation with Mermaid in {norm_lang}."
+        f"You are an objective software architect. "
+        f"Write concise, strictly factual overview documentation "
+        f"with Mermaid in {norm_lang}."
     )
     messages = [
         {"role": "system", "content": sys_msg},
