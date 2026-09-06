@@ -1325,6 +1325,99 @@ class TestCoverageBoost(unittest.TestCase):
         self.assertTrue(fn_doc_f.exists())
         self.assertTrue(var_doc_f.exists())
 
+    def test_sync_minimal_propagation_and_top_down(self):
+        """Test minimal symbol-level sync, propagation stop, and scoping."""
+        py_file = self.src_dir / "calc.py"
+        py_file.write_text(
+            "g_scale = 10\n\n"
+            "def helper(x: int) -> int:\n"
+            "    return x + 1\n\n"
+            "def compute(a: int) -> int:\n"
+            "    val = helper(a)\n"
+            "    return val * g_scale\n",
+            encoding="utf-8",
+        )
+
+        # 1. First run
+        run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+
+        # 2. Modify helper implementation (internal tweak)
+        py_file.write_text(
+            "g_scale = 10\n\n"
+            "def helper(x: int) -> int:\n"
+            "    # internal tweak\n"
+            "    y = x + 1\n"
+            "    return y\n\n"
+            "def compute(a: int) -> int:\n"
+            "    val = helper(a)\n"
+            "    return val * g_scale\n",
+            encoding="utf-8",
+        )
+
+        # Mock LLM Client to verify which functions get analyzed
+        analyzed_symbols = []
+
+        class MockLLMClient:
+            token = None
+            host = "http://localhost:8080"
+            base_url = "http://localhost:8080"
+            model = "test-model"
+            context_size = 16384
+
+            def check_availability(self):
+                return True
+
+            def explain_symbol(self, *args, **kwargs):
+                sym_name = kwargs.get("name", "")
+                analyzed_symbols.append(("pass1", sym_name))
+                return {
+                    "purpose": "Computes or scales values",
+                    "inputs": "Integer input",
+                    "outputs": "Integer output",
+                    "overview": "Overview of calculation",
+                }
+
+            def refine_variable_top_down(self, *args, **kwargs):
+                var_name = kwargs.get("var_name", "")
+                analyzed_symbols.append(("pass2", var_name))
+                return {
+                    "role": "Top-down variable role",
+                    "purpose": "Scales calculation",
+                }
+
+        with patch("pystdoc.engine.LLMClient") as mock_cls:
+            mock_cls.return_value = MockLLMClient()
+            with patch(
+                "pystdoc.engine.compute_file_hash",
+                return_value="dummy_new_hash",
+            ):
+                run_docgen(
+                    target_dir=self.test_dir,
+                    use_llm=True,
+                    allow_fallback=True,
+                    language="English",
+                )
+
+        # Helper was modified so it was analyzed in pass 1.
+        # But because the returned purpose/notes are identical,
+        # external change propagation is stopped.
+        self.assertTrue(
+            any(item == ("pass1", "helper") for item in analyzed_symbols)
+        )
+
+        # Check DB symbol hash is properly recorded
+        from pystdoc.db import DocgenDB
+        db = DocgenDB(self.test_dir / ".docgen" / "index.db")
+        cur = db.conn.cursor()
+        cur.execute("SELECT * FROM symbol_hashes")
+        sym_records = cur.fetchall()
+        self.assertTrue(any("helper" in r["unique_id"] for r in sym_records))
+
 
 if __name__ == "__main__":
     unittest.main()

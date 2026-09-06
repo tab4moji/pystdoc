@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from pystdoc.scanner import scan_files, write_files_list
 from pystdoc.hasher import compute_file_hash, compute_symbol_hash
@@ -367,6 +367,57 @@ def run_docgen(
             node.unique_id: node for node in all_symbol_nodes
         }
 
+        # Collect initially changed or missing symbols
+        dirty_symbol_ids: Set[str] = set()
+        node_snippets: Dict[str, str] = {}
+        node_hashes: Dict[str, str] = {}
+
+        for node in all_symbol_nodes:
+            sym = node.symbol
+            snippet = get_code_snippet(
+                node.full_path, sym.line_start, sym.line_end
+            )
+            node_snippets[node.unique_id] = snippet
+            sym_hash = compute_symbol_hash(snippet, sym.signature, sym.doc)
+            node_hashes[node.unique_id] = sym_hash
+
+            prefix_in_unique_id = ""
+            if "::" in node.unique_id:
+                id_part = node.unique_id.split("::", 1)[1]
+                raw_id = id_part.split(".", 1)[-1]
+                if "." in raw_id:
+                    prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
+
+            k_pfx = get_kind_prefix(sym.kind)
+            sym_id_str = (
+                f"{prefix_in_unique_id}{sym.name}"
+                if prefix_in_unique_id
+                else sym.name
+            )
+            docgen_docs_dir = target_dir / ".docgen" / "documents"
+            expected_sym_doc = (
+                docgen_docs_dir
+                / f"{node.rel_path.as_posix()}.{k_pfx}.{sym_id_str}.md"
+            )
+            expected_file_doc = (
+                docgen_docs_dir / f"{node.rel_path.as_posix()}.md"
+            )
+            doc_file_missing = (
+                not expected_sym_doc.exists() or not expected_file_doc.exists()
+            )
+
+            is_sym_changed = db.update_symbol_hash(
+                node.unique_id, node.rel_path.as_posix(), sym_hash
+            )
+            db.save_symbol_metadata(
+                node.unique_id, sym, node.rel_path.as_posix()
+            )
+
+            if force or is_sym_changed or doc_file_missing:
+                dirty_symbol_ids.add(node.unique_id)
+
+        actually_updated_symbol_ids: Set[str] = set()
+        dirty_lock = threading.Lock()
         print_lock = threading.Lock()
         started_counter = [0]
         completed_counter = [0]
@@ -381,10 +432,8 @@ def run_docgen(
             sym = node.symbol
             rel_path = node.rel_path
             full_path = node.full_path
+            snippet = node_snippets[node.unique_id]
 
-            snippet = get_code_snippet(
-                full_path, sym.line_start, sym.line_end
-            )
             prefix_in_unique_id = ""
             if "::" in node.unique_id:
                 id_part = node.unique_id.split("::", 1)[1]
@@ -392,36 +441,17 @@ def run_docgen(
                 if "." in raw_id:
                     prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
 
-            sym_hash = compute_symbol_hash(snippet, sym.signature, sym.doc)
-            is_sym_changed = db.update_symbol_hash(
-                node.unique_id, rel_path.as_posix(), sym_hash
-            )
-            db.save_symbol_metadata(node.unique_id, sym, rel_path.as_posix())
-
-            k_pfx = get_kind_prefix(sym.kind)
-            sym_id_str = (
-                f"{prefix_in_unique_id}{sym.name}"
-                if prefix_in_unique_id
-                else sym.name
-            )
-            docgen_docs_dir = target_dir / ".docgen" / "documents"
-            expected_sym_doc = (
-                docgen_docs_dir
-                / f"{rel_path.as_posix()}.{k_pfx}.{sym_id_str}.md"
-            )
-            expected_file_doc = docgen_docs_dir / f"{rel_path.as_posix()}.md"
-            doc_file_missing = (
-                not expected_sym_doc.exists() or not expected_file_doc.exists()
-            )
-
-            # Cache check with language key (bypass if file was deleted)
             cache_key = f"{node.unique_id}::{norm_lang}"
-            cached_data = (
-                db.load_symbol_cache(cache_key)
-                or db.load_symbol_cache(node.unique_id)
-                if not force and not is_sym_changed and not doc_file_missing
-                else None
-            )
+
+            with dirty_lock:
+                is_dirty = node.unique_id in dirty_symbol_ids
+
+            cached_data = None
+            if not is_dirty and not force:
+                cached_data = (
+                    db.load_symbol_cache(cache_key)
+                    or db.load_symbol_cache(node.unique_id)
+                )
 
             with print_lock:
                 started_counter[0] += 1
@@ -452,9 +482,11 @@ def run_docgen(
             if cached_data:
                 sym.purpose = cached_data.get("purpose", sym.purpose)
                 sym.inputs_note = cached_data.get(
-                    "inputs_note", sym.inputs_note)
+                    "inputs_note", sym.inputs_note
+                )
                 sym.outputs_note = cached_data.get(
-                    "outputs_note", sym.outputs_note)
+                    "outputs_note", sym.outputs_note
+                )
                 sym.overview = cached_data.get("overview", sym.overview)
                 sym.top_down_context = cached_data.get(
                     "top_down_context", sym.top_down_context
@@ -467,7 +499,10 @@ def run_docgen(
                         flush=True,
                     )
             elif is_static_bypass:
-                # Fast AST-based static generation (0s, prevents LLM deadlock)
+                old_cache = (
+                    db.load_symbol_cache(cache_key)
+                    or db.load_symbol_cache(node.unique_id)
+                )
                 static_doc = generate_static_symbol_doc(sym, norm_lang)
                 sym.purpose = static_doc["purpose"]
                 sym.inputs_note = static_doc["inputs"]
@@ -484,6 +519,18 @@ def run_docgen(
                 db.save_symbol_cache(cache_key, save_payload)
                 db.save_symbol_cache(node.unique_id, save_payload)
 
+                with dirty_lock:
+                    actually_updated_symbol_ids.add(node.unique_id)
+                    has_external_change = (
+                        old_cache is None
+                        or old_cache.get("purpose") != sym.purpose
+                        or old_cache.get("inputs_note") != sym.inputs_note
+                        or old_cache.get("outputs_note") != sym.outputs_note
+                        or old_cache.get("overview") != sym.overview
+                    )
+                    if has_external_change and node.direct_caller_ids:
+                        dirty_symbol_ids.update(node.direct_caller_ids)
+
                 with print_lock:
                     completed_counter[0] += 1
                     print(
@@ -492,6 +539,10 @@ def run_docgen(
                         flush=True,
                     )
             elif llm_client:
+                old_cache = (
+                    db.load_symbol_cache(cache_key)
+                    or db.load_symbol_cache(node.unique_id)
+                )
                 callee_context = build_callee_context_summary(
                     node, resolved_symbols_map
                 )
@@ -556,6 +607,18 @@ def run_docgen(
                 db.save_symbol_cache(cache_key, save_payload)
                 db.save_symbol_cache(node.unique_id, save_payload)
 
+                with dirty_lock:
+                    actually_updated_symbol_ids.add(node.unique_id)
+                    has_external_change = (
+                        old_cache is None
+                        or old_cache.get("purpose") != sym.purpose
+                        or old_cache.get("inputs_note") != sym.inputs_note
+                        or old_cache.get("outputs_note") != sym.outputs_note
+                        or old_cache.get("overview") != sym.overview
+                    )
+                    if has_external_change and node.direct_caller_ids:
+                        dirty_symbol_ids.update(node.direct_caller_ids)
+
                 with print_lock:
                     completed_counter[0] += 1
                     done_count = completed_counter[0]
@@ -604,6 +667,7 @@ def run_docgen(
                         return 1
 
         # 4. Pass 2: Top-down variable & field refinement
+        id_to_node_map = {n.unique_id: n for n in all_symbol_nodes}
         type_nodes = [
             n
             for n in all_symbol_nodes
@@ -733,10 +797,50 @@ def run_docgen(
             )
             v_doc_missing = not v_expected_sym_doc.exists()
 
+            # Check if this node is downstream of any updated symbols
+            is_self_updated = (
+                v_node.unique_id in actually_updated_symbol_ids
+            )
+            is_parent_container_updated = (
+                parent_container_info is not None
+                and any(
+                    t.symbol.name == parent_container_info["name"]
+                    and t.unique_id in actually_updated_symbol_ids
+                    for t in type_nodes
+                    if t.rel_path == v_rel
+                )
+            )
+            is_parent_func_updated = (
+                any(
+                    f_info["name"] in [
+                        id_to_node_map[u].symbol.name
+                        for u in actually_updated_symbol_ids
+                        if u in id_to_node_map
+                    ]
+                    for f_info in parent_funcs
+                )
+                or any(
+                    caller_id in actually_updated_symbol_ids
+                    for caller_id in v_node.direct_caller_ids
+                )
+            )
+
+            is_downstream = (
+                is_self_updated
+                or is_parent_container_updated
+                or is_parent_func_updated
+                or v_doc_missing
+                or not v_sym.top_down_context
+            )
+
             should_refine = (
                 llm_client
                 and (parent_funcs or parent_container_info)
-                and (force or v_doc_missing or not v_sym.top_down_context)
+                and (
+                    force
+                    or (bool(actually_updated_symbol_ids) and is_downstream)
+                    or not v_sym.top_down_context
+                )
             )
             if should_refine:
                 ctx_names = []
