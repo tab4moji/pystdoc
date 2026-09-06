@@ -120,9 +120,20 @@ pystdoc desc Userlib::main
 pystdoc desc logMessage
 ```
 
-#### 3. Practical Real-World Example (Dedicated Remote LLM Server)
+#### 3. Continuous File Change Watch & Auto-Sync (`watch` Mode)
+Automatically monitor source code directories via Linux `dnotify` (and snapshot polling) and auto-sync on file save:
+
 ```bash
-pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-26b-a4b --language 日本語
+# Start continuous watcher
+pystdoc watch --dir ./my_project/
+
+# Or with flag and custom debounce interval (default: 1.0s)
+pystdoc --watch --interval 0.5
+```
+
+#### 4. Practical Real-World Example (Dedicated Remote LLM Server)
+```bash
+pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26b-a4b --language 日本語
 ```
 
 ---
@@ -132,6 +143,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-2
 | Subcommand | Aliases | Description |
 | :--- | :--- | :--- |
 | `sync` | *(default)* | Run full 3-in-1 unified pipeline: parse code, generate symbol docs, architecture design, and project README. |
+| `watch` | `monitor` | Continuously watch source directories for changes (dnotify / mtime) and auto-sync on save. |
 | `list` | `ls` | List all indexed source files from `.docgen/`. |
 | `functions` | `fn`, `func`, `function`, `funcs`, `fns` | List all functions/methods, or inspect `<name>` description directly (`fn <name>`). |
 | `variables` | `var`, `variable`, `vars` | List all variables/constants/fields, or inspect `<name>` description directly (`var <name>`). |

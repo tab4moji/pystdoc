@@ -263,12 +263,97 @@ def _parse_query_target_and_symbol(
     return target_path.resolve(), symbol
 
 
+def run_watch(
+    target_dir: Path,
+    use_llm: bool = True,
+    host: Optional[str] = None,
+    model: Optional[str] = None,
+    token: Optional[str] = None,
+    context_size: int = 16384,
+    concurrency: int = 1,
+    language: str = "English",
+    allow_fallback: bool = False,
+    compile_commands: Optional[str] = None,
+    interval: float = 1.0,
+) -> int:
+    """Run continuous watcher with auto-sync on code change."""
+    from pystdoc.watcher import DNotifyWatcher
+
+    def _sync_action() -> None:
+        ret_docgen = run_docgen(
+            target_dir=target_dir,
+            use_llm=use_llm,
+            host=host,
+            model=model,
+            token=token,
+            context_size=context_size,
+            language=language,
+            force=False,
+            allow_fallback=allow_fallback,
+            compile_commands_path=compile_commands,
+            concurrency=concurrency,
+        )
+        if ret_docgen != 0:
+            return
+
+        ret_design = run_design_generation(
+            target_dir=target_dir,
+            use_llm=use_llm,
+            host=host,
+            model=model,
+            token=token,
+            context_size=context_size,
+            language=language,
+            force=False,
+            allow_fallback=allow_fallback,
+        )
+        if ret_design != 0:
+            return
+
+        llm_client = None
+        if use_llm:
+            client = LLMClient(
+                host=host,
+                model=model,
+                token=token,
+                context_size=context_size,
+            )
+            if client.check_availability():
+                llm_client = client
+
+        db_path = target_dir / ".docgen" / "index.db"
+        db = DocgenDB(db_path) if db_path.exists() else None
+        generate_readme_doc(
+            target_dir=target_dir,
+            llm_client=llm_client,
+            language=language,
+            force=False,
+            allow_fallback=allow_fallback,
+            db=db,
+        )
+
+    print(
+        "\n>>> Performing initial sync before starting watcher...",
+        flush=True,
+    )
+    _sync_action()
+
+    watcher = DNotifyWatcher(
+        target_dir=target_dir,
+        on_change=_sync_action,
+        debounce_seconds=interval,
+    )
+    watcher.start(blocking=True)
+    return 0
+
+
 def reportgen_main(argv: Optional[List[str]] = None) -> None:
     """CLI entry point for `reportgen` and `pystdoc` commands."""
     if argv is None:
         argv = sys.argv[1:]
 
     sync_cmds = {"sync"}
+    watch_cmds = {"watch", "monitor"}
     list_cmds = {"list", "ls"}
     fn_cmds = {"functions", "func", "function", "fn", "funcs", "fns"}
     var_cmds = {"variables", "variable", "var", "vars"}
@@ -283,6 +368,9 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         first_arg = argv[0].lower()
         if first_arg in sync_cmds:
             subcmd = "sync"
+            sub_args = argv[1:]
+        elif first_arg in watch_cmds:
+            subcmd = "watch"
             sub_args = argv[1:]
         elif first_arg in list_cmds:
             subcmd = "list"
@@ -438,6 +526,18 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--skip-designgen", action="store_true", help="Skip designgen step"
     )
+    parser.add_argument(
+        "--watch",
+        "-w",
+        action="store_true",
+        help="Continuously watch for code changes (dnotify) and auto-sync",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Debounce interval in seconds for watch mode (default: 1.0)",
+    )
 
     args = parser.parse_args(sub_args)
     target_dir = Path(args.dir).resolve()
@@ -462,6 +562,23 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         if args.allow_fallback is not None
         else cfg.get("allow_fallback", False)
     )
+
+    if subcmd == "watch" or args.watch:
+        sys.exit(
+            run_watch(
+                target_dir=target_dir,
+                use_llm=not args.no_llm,
+                host=host,
+                model=model,
+                token=token,
+                context_size=ctx_size,
+                concurrency=concurrency,
+                language=lang,
+                allow_fallback=allow_fallback,
+                compile_commands=args.compile_commands,
+                interval=args.interval,
+            )
+        )
 
     print("=" * 64)
     print(
