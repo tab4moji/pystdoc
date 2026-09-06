@@ -339,6 +339,14 @@ class TestCLI(unittest.TestCase):
                     reportgen_main()
                 self.assertEqual(cm.exception.code, 1)
 
+    def test_reportgen_cli_mcp_subcommand(self):
+        for alias in ["mcp", "serve", "server"]:
+            with patch("pystdoc.mcp_server.run_mcp_server") as mock_mcp:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([alias])
+                self.assertEqual(cm.exception.code, 0)
+                mock_mcp.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

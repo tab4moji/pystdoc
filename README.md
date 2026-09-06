@@ -137,6 +137,63 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-2
 | `variables` | `var`, `variable`, `vars` | List all variables/constants/fields, or inspect `<name>` description directly (`var <name>`). |
 | `types` | `type`, `class`, `classes`, `struct`, `structs` | List all types/classes/structs/enums, or inspect `<name>` description directly (`type <name>`). |
 | `description` | `desc` | Display rich purpose, overview, signature, and source location for specified symbol or FQDN. |
+| `mcp` | `serve`, `server` | Run Model Context Protocol (MCP) stdio server for OpenCode / AI coding agents. |
+
+---
+
+## 🔧 Configuration File (`~/.config/pystdoc/pystdoc.json`)
+
+`pystdoc` automatically loads defaults from `~/.config/pystdoc/pystdoc.json` (or `./.pystdoc.json` for per-project configuration). This allows commands and MCP servers to run without passing long CLI flags.
+
+```json:~/.config/pystdoc/pystdoc.json
+{
+  "host": "http://192.168.0.123:11434",
+  "model": "gemma4-26b-a4b",
+  "language": "Japanese",
+  "context_size": 16384,
+  "concurrency": 2,
+  "allow_fallback": true,
+  "token": null
+}
+```
+
+### Precedence Resolution:
+1. **CLI Flags** (`--host`, `--model`, `-l`, etc.)
+2. **Environment Variables** (`LLM_HOST`, `LLM_MODEL`, `OPENAI_API_KEY`, etc.)
+3. **Project Config** (`<project>/.pystdoc.json`)
+4. **User Config** (`~/.config/pystdoc/pystdoc.json`)
+5. **Builtin Defaults** (`http://127.0.0.1:11434`, `gemma4-26b-a4b`, `English`)
+
+---
+
+## 🔌 Model Context Protocol (MCP) Server
+
+`pystdoc` includes a built-in MCP server (`pystdoc mcp`) for **OpenCode**, Claude Desktop, and other MCP-compatible AI agents. It enables small local LLMs to retrieve targeted AST structures and symbol docs on-demand without loading multi-thousand-line source files into context.
+
+### OpenCode Configuration (`~/.config/opencode/opencode.json`)
+
+```json:~/.config/opencode/opencode.json
+{
+  "mcp": {
+    "pystdoc": {
+      "type": "local",
+      "command": [
+        "uv",
+        "run",
+        "pystdoc",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+### Tools Provided by MCP Server:
+- `pystdoc_get_symbol(symbol, path)`: Retrieve rich purpose, overview, signature, line ranges, and markdown snippet for a specific symbol.
+- `pystdoc_list_symbols(kind, path)`: List indexed symbols (`function`, `variable`, `type`, or `all`) with definition line ranges (`file:from:to`).
+- `pystdoc_get_design(section, path)`: Retrieve architecture design docs (`overview`, `data_models`, `execution_model`, `readme`, or module names).
+- `pystdoc_list_files(path)`: List all indexed source code files.
+- `pystdoc_sync(path, no_llm, language)`: Generate or update full `.docgen/` suite.
 
 ---
 
@@ -158,3 +215,4 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-2
 
 ## 📄 License
 MIT License. Author: **tab4moji**.
+

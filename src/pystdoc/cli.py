@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import pystdoc
+from pystdoc.config import load_config
 from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
@@ -40,34 +41,34 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
         "--host",
         "-H",
         default=None,
-        help="LLM server host URL (default: http://127.0.0.1:11434)",
+        help="LLM server host URL",
     )
     parser.add_argument("--base-url", "-b", default=None,
                         help="Alias for --host")
     parser.add_argument(
         "--model",
         "-m",
-        default="gemma4-26b-a4b",
-        help="LLM model identifier (default: gemma4-26b-a4b)",
+        default=None,
+        help="LLM model identifier",
     )
     parser.add_argument(
         "--token",
         default=None,
-        help="API token / key (or env OPENAI_API_KEY / LLM_TOKEN)",
+        help="API token / key",
     )
     parser.add_argument("--api-key", default=None, help="Alias for --token")
     parser.add_argument(
         "--context-size",
         "--ctx-size",
         type=int,
-        default=16384,
-        help="LLM context window size (default: 16384)",
+        default=None,
+        help="LLM context window size",
     )
     parser.add_argument(
         "--language",
         "-l",
-        default="English",
-        help="Documentation language (default: English)",
+        default=None,
+        help="Documentation language",
     )
     parser.add_argument(
         "--force",
@@ -78,6 +79,7 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--allow-fallback",
         action="store_true",
+        default=None,
         help="Allow fallback to static template on LLM failure",
     )
     parser.add_argument(
@@ -89,26 +91,39 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
         "--concurrency",
         "-j",
         type=int,
-        default=1,
-        help="Number of parallel LLM workers (default: 1)",
+        default=None,
+        help="Number of parallel LLM workers",
     )
 
     args = parser.parse_args(argv)
+    target = Path(args.dir)
+    cfg = load_config(target)
+
+    host = args.host or args.base_url or cfg.get("host")
+    model = args.model or cfg.get("model", "gemma4-26b-a4b")
+    token = args.token or args.api_key or cfg.get("token")
+    ctx_size = args.context_size or cfg.get("context_size", 16384)
+    lang = args.language or cfg.get("language", "English")
+    concurrency = args.concurrency or cfg.get("concurrency", 1)
+    allow_fallback = (
+        args.allow_fallback
+        if args.allow_fallback is not None
+        else cfg.get("allow_fallback", False)
+    )
+
     sys.exit(
         run_docgen(
-            target_dir=Path(args.dir),
+            target_dir=target,
             use_llm=not args.no_llm,
-            host=args.host,
-            base_url=args.base_url,
-            model=args.model,
-            token=args.token,
-            api_key=args.api_key,
-            context_size=args.context_size,
-            language=args.language,
+            host=host,
+            model=model,
+            token=token,
+            context_size=ctx_size,
+            language=lang,
             force=args.force,
-            allow_fallback=args.allow_fallback,
+            allow_fallback=allow_fallback,
             compile_commands_path=args.compile_commands,
-            concurrency=args.concurrency,
+            concurrency=concurrency,
         )
     )
 
@@ -133,34 +148,34 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
         "--host",
         "-H",
         default=None,
-        help="LLM server host URL (default: http://127.0.0.1:11434)",
+        help="LLM server host URL",
     )
     parser.add_argument("--base-url", "-b", default=None,
                         help="Alias for --host")
     parser.add_argument(
         "--model",
         "-m",
-        default="gemma4-26b-a4b",
-        help="LLM model identifier (default: gemma4-26b-a4b)",
+        default=None,
+        help="LLM model identifier",
     )
     parser.add_argument(
         "--token",
         default=None,
-        help="API token / key (or env OPENAI_API_KEY / LLM_TOKEN)",
+        help="API token / key",
     )
     parser.add_argument("--api-key", default=None, help="Alias for --token")
     parser.add_argument(
         "--context-size",
         "--ctx-size",
         type=int,
-        default=16384,
-        help="LLM context window size (default: 16384)",
+        default=None,
+        help="LLM context window size",
     )
     parser.add_argument(
         "--language",
         "-l",
-        default="English",
-        help="Documentation language (default: English)",
+        default=None,
+        help="Documentation language",
     )
     parser.add_argument(
         "--force",
@@ -171,23 +186,36 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--allow-fallback",
         action="store_true",
+        default=None,
         help="Allow fallback to static template on LLM failure",
     )
 
     args = parser.parse_args(argv)
+    target = Path(args.dir)
+    cfg = load_config(target)
+
+    host = args.host or args.base_url or cfg.get("host")
+    model = args.model or cfg.get("model", "gemma4-26b-a4b")
+    token = args.token or args.api_key or cfg.get("token")
+    ctx_size = args.context_size or cfg.get("context_size", 16384)
+    lang = args.language or cfg.get("language", "English")
+    allow_fallback = (
+        args.allow_fallback
+        if args.allow_fallback is not None
+        else cfg.get("allow_fallback", False)
+    )
+
     sys.exit(
         run_design_generation(
-            target_dir=Path(args.dir),
+            target_dir=target,
             use_llm=not args.no_llm,
-            host=args.host,
-            base_url=args.base_url,
-            model=args.model,
-            token=args.token,
-            api_key=args.api_key,
-            context_size=args.context_size,
-            language=args.language,
+            host=host,
+            model=model,
+            token=token,
+            context_size=ctx_size,
+            language=lang,
             force=args.force,
-            allow_fallback=args.allow_fallback,
+            allow_fallback=allow_fallback,
         )
     )
 
@@ -246,6 +274,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     var_cmds = {"variables", "variable", "var", "vars"}
     type_cmds = {"types", "type", "class", "classes", "struct", "structs"}
     desc_cmds = {"description", "desc"}
+    mcp_cmds = {"mcp", "serve", "server"}
 
     subcmd: Optional[str] = None
     sub_args = list(argv)
@@ -270,8 +299,17 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         elif first_arg in desc_cmds:
             subcmd = "description"
             sub_args = argv[1:]
+        elif first_arg in mcp_cmds:
+            subcmd = "mcp"
+            sub_args = argv[1:]
 
-    if subcmd == "list":
+    if subcmd == "mcp":
+        from pystdoc.mcp_server import run_mcp_server
+
+        run_mcp_server()
+        sys.exit(0)
+
+    elif subcmd == "list":
         parser = argparse.ArgumentParser(
             prog="pystdoc list", description="List indexed source code files"
         )
@@ -342,34 +380,34 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         "--host",
         "-H",
         default=None,
-        help="LLM server host URL (default: http://127.0.0.1:11434)",
+        help="LLM server host URL",
     )
     parser.add_argument("--base-url", "-b", default=None,
                         help="Alias for --host")
     parser.add_argument(
         "--model",
         "-m",
-        default="gemma4-26b-a4b",
-        help="LLM model identifier (default: gemma4-26b-a4b)",
+        default=None,
+        help="LLM model identifier",
     )
     parser.add_argument(
         "--token",
         default=None,
-        help="API token / key (or env OPENAI_API_KEY / LLM_TOKEN)",
+        help="API token / key",
     )
     parser.add_argument("--api-key", default=None, help="Alias for --token")
     parser.add_argument(
         "--context-size",
         "--ctx-size",
         type=int,
-        default=16384,
-        help="LLM context window size (default: 16384)",
+        default=None,
+        help="LLM context window size",
     )
     parser.add_argument(
         "--language",
         "-l",
-        default="English",
-        help="Documentation language (default: English)",
+        default=None,
+        help="Documentation language",
     )
     parser.add_argument(
         "--force",
@@ -380,6 +418,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--allow-fallback",
         action="store_true",
+        default=None,
         help="Allow fallback to static template on LLM failure",
     )
     parser.add_argument(
@@ -391,8 +430,8 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         "--concurrency",
         "-j",
         type=int,
-        default=1,
-        help="Number of parallel LLM workers (default: 1)",
+        default=None,
+        help="Number of parallel LLM workers",
     )
     parser.add_argument("--skip-docgen", action="store_true",
                         help="Skip docgen step")
@@ -410,10 +449,24 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         )
         sys.exit(1)
 
+    cfg = load_config(target_dir)
+
+    host = args.host or args.base_url or cfg.get("host")
+    model = args.model or cfg.get("model", "gemma4-26b-a4b")
+    token = args.token or args.api_key or cfg.get("token")
+    ctx_size = args.context_size or cfg.get("context_size", 16384)
+    lang = args.language or cfg.get("language", "English")
+    concurrency = args.concurrency or cfg.get("concurrency", 1)
+    allow_fallback = (
+        args.allow_fallback
+        if args.allow_fallback is not None
+        else cfg.get("allow_fallback", False)
+    )
+
     print("=" * 64)
     print(
         f"=== pystdoc Unified Pipeline v{pystdoc.__version__} "
-        f"(Lang: {args.language}): {target_dir} ==="
+        f"(Lang: {lang}): {target_dir} ==="
     )
     print("=" * 64)
 
@@ -426,17 +479,15 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         ret_docgen = run_docgen(
             target_dir=target_dir,
             use_llm=not args.no_llm,
-            host=args.host,
-            base_url=args.base_url,
-            model=args.model,
-            token=args.token,
-            api_key=args.api_key,
-            context_size=args.context_size,
-            language=args.language,
+            host=host,
+            model=model,
+            token=token,
+            context_size=ctx_size,
+            language=lang,
             force=args.force,
-            allow_fallback=args.allow_fallback,
+            allow_fallback=allow_fallback,
             compile_commands_path=args.compile_commands,
-            concurrency=args.concurrency,
+            concurrency=concurrency,
         )
         if ret_docgen != 0:
             sys.exit(ret_docgen)
@@ -450,15 +501,13 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         ret_design = run_design_generation(
             target_dir=target_dir,
             use_llm=not args.no_llm,
-            host=args.host,
-            base_url=args.base_url,
-            model=args.model,
-            token=args.token,
-            api_key=args.api_key,
-            context_size=args.context_size,
-            language=args.language,
+            host=host,
+            model=model,
+            token=token,
+            context_size=ctx_size,
+            language=lang,
             force=args.force,
-            allow_fallback=args.allow_fallback,
+            allow_fallback=allow_fallback,
         )
         if ret_design != 0:
             sys.exit(ret_design)
@@ -472,14 +521,14 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     llm_client = None
     if not args.no_llm:
         client = LLMClient(
-            host=args.host or args.base_url,
-            model=args.model,
-            token=args.token or args.api_key,
-            context_size=args.context_size,
+            host=host,
+            model=model,
+            token=token,
+            context_size=ctx_size,
         )
         if client.check_availability():
             llm_client = client
-        elif not args.allow_fallback:
+        elif not allow_fallback:
             print(
                 f"Error: Failed to connect to LLM server ({client.base_url}).",
                 file=sys.stderr,
@@ -492,9 +541,9 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     generate_readme_doc(
         target_dir=target_dir,
         llm_client=llm_client,
-        language=args.language,
+        language=lang,
         force=args.force,
-        allow_fallback=args.allow_fallback,
+        allow_fallback=allow_fallback,
         db=db,
     )
 
