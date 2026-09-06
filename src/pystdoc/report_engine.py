@@ -108,7 +108,7 @@ def generate_readme_doc(
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"report::readme::{norm_lang}"
 
-    if db and not force:
+    if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             print("  [Cached]: .docgen/README.md")

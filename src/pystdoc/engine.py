@@ -398,12 +398,28 @@ def run_docgen(
             )
             db.save_symbol_metadata(node.unique_id, sym, rel_path.as_posix())
 
-            # Cache check with language key
+            k_pfx = get_kind_prefix(sym.kind)
+            sym_id_str = (
+                f"{prefix_in_unique_id}{sym.name}"
+                if prefix_in_unique_id
+                else sym.name
+            )
+            docgen_docs_dir = target_dir / ".docgen" / "documents"
+            expected_sym_doc = (
+                docgen_docs_dir
+                / f"{rel_path.as_posix()}.{k_pfx}.{sym_id_str}.md"
+            )
+            expected_file_doc = docgen_docs_dir / f"{rel_path.as_posix()}.md"
+            doc_file_missing = (
+                not expected_sym_doc.exists() or not expected_file_doc.exists()
+            )
+
+            # Cache check with language key (bypass if file was deleted)
             cache_key = f"{node.unique_id}::{norm_lang}"
             cached_data = (
                 db.load_symbol_cache(cache_key)
                 or db.load_symbol_cache(node.unique_id)
-                if not force and not is_sym_changed
+                if not force and not is_sym_changed and not doc_file_missing
                 else None
             )
 
@@ -697,10 +713,30 @@ def run_docgen(
                             }
                         )
 
+            prefix_in_unique_id = ""
+            if "::" in v_node.unique_id:
+                id_part = v_node.unique_id.split("::", 1)[1]
+                raw_id = id_part.split(".", 1)[-1]
+                if "." in raw_id:
+                    prefix_in_unique_id = raw_id.rsplit(".", 1)[0] + "."
+
+            v_k_pfx = get_kind_prefix(v_sym.kind)
+            v_sym_id_str = (
+                f"{prefix_in_unique_id}{v_sym.name}"
+                if prefix_in_unique_id
+                else v_sym.name
+            )
+            v_docgen_docs_dir = target_dir / ".docgen" / "documents"
+            v_expected_sym_doc = (
+                v_docgen_docs_dir
+                / f"{v_rel.as_posix()}.{v_k_pfx}.{v_sym_id_str}.md"
+            )
+            v_doc_missing = not v_expected_sym_doc.exists()
+
             should_refine = (
                 llm_client
                 and (parent_funcs or parent_container_info)
-                and (force or not v_sym.top_down_context)
+                and (force or v_doc_missing or not v_sym.top_down_context)
             )
             if should_refine:
                 ctx_names = []

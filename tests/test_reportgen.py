@@ -107,7 +107,28 @@ class TestReportgen(unittest.TestCase):
         self.assertIn("# Forced README", res_forced)
         self.assertEqual(mock_llm.chat_completion.call_count, 3)
 
-        # 4. Fallback exception test
+        # 4. Deleted file test: when README.md is deleted, it must regenerate
+        readme_file = self.test_dir / ".docgen" / "README.md"
+        self.assertTrue(readme_file.exists())
+        readme_file.unlink()
+        self.assertFalse(readme_file.exists())
+
+        mock_llm.reset_mock()
+        mock_llm.chat_completion.side_effect = [
+            "Ans 1", "Ans 2", "# Regenerated README"
+        ]
+        res_regen = generate_readme_doc(
+            target_dir=self.test_dir,
+            llm_client=mock_llm,
+            language="English",
+            force=False,
+            db=db,
+        )
+        self.assertIn("# Regenerated README", res_regen)
+        self.assertEqual(mock_llm.chat_completion.call_count, 3)
+        self.assertTrue(readme_file.exists())
+
+        # 5. Fallback exception test
         mock_llm_fail = MagicMock()
         mock_llm_fail.chat_completion.side_effect = Exception("LLM dead")
         with self.assertRaises(LLMError):

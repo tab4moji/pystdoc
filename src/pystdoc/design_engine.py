@@ -286,7 +286,7 @@ def generate_data_models_doc(
     cache_key = f"design::data_models::{norm_lang}"
     out_file = target_dir / ".docgen" / "design" / "data_models.md"
 
-    if db and not force:
+    if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             print("  [Cached]: .docgen/design/data_models.md")
@@ -405,7 +405,7 @@ def generate_execution_model_doc(
     cache_key = f"design::execution_model::{norm_lang}"
     out_file = target_dir / ".docgen" / "design" / "execution_model.md"
 
-    if db and not force:
+    if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             print("  [Cached]: .docgen/design/execution_model.md")
@@ -530,7 +530,7 @@ def generate_module_docs(
             / f"{mod_name}.md"
         )
 
-        if db and not force:
+        if db and not force and out_file.exists():
             cached_content = db.load_design_cache(cache_key, input_hash)
             if cached_content:
                 print(f"    [Cached]: .docgen/design/modules/{mod_name}.md")
@@ -649,7 +649,7 @@ def generate_overview_doc(
     cache_key = f"design::overview::{norm_lang}"
     out_file = target_dir / ".docgen" / "design" / "overview.md"
 
-    if db and not force:
+    if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             print("  [Cached]: .docgen/design/overview.md")

@@ -1241,6 +1241,90 @@ class TestCoverageBoost(unittest.TestCase):
             sanitize_architectural_context(valid_ctx, "fb"), valid_ctx
         )
 
+    def test_sync_regenerates_when_all_kinds_of_files_deleted(self):
+        c_file = self.src_dir / "app.c"
+        c_file.write_text(
+            "int g_state = 1;\nint run_app() { return g_state; }\n",
+            encoding="utf-8",
+        )
+        # 1. Run full docgen
+        run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        # 2. Run designgen
+        run_design_generation(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        # 3. Run reportgen
+        from pystdoc.report_engine import generate_readme_doc
+        generate_readme_doc(
+            target_dir=self.test_dir,
+            llm_client=None,
+            language="English",
+            allow_fallback=True,
+        )
+
+        docgen_dir = self.test_dir / ".docgen"
+        readme_f = docgen_dir / "README.md"
+        overview_f = docgen_dir / "design" / "overview.md"
+        data_models_f = docgen_dir / "design" / "data_models.md"
+        exec_model_f = docgen_dir / "design" / "execution_model.md"
+        fn_doc_f = (
+            docgen_dir / "documents" / "src" / "app.c.fn.run_app.md"
+        )
+        var_doc_f = (
+            docgen_dir / "documents" / "src" / "app.c.var.g_state.md"
+        )
+
+        self.assertTrue(readme_f.exists())
+        self.assertTrue(overview_f.exists())
+        self.assertTrue(data_models_f.exists())
+        self.assertTrue(exec_model_f.exists())
+        self.assertTrue(fn_doc_f.exists())
+        self.assertTrue(var_doc_f.exists())
+
+        # Delete all generated files
+        readme_f.unlink()
+        overview_f.unlink()
+        data_models_f.unlink()
+        exec_model_f.unlink()
+        fn_doc_f.unlink()
+        var_doc_f.unlink()
+
+        # Re-run docgen, designgen, reportgen
+        run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        run_design_generation(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        generate_readme_doc(
+            target_dir=self.test_dir,
+            llm_client=None,
+            language="English",
+            allow_fallback=True,
+        )
+
+        # Verify all deleted files are restored
+        self.assertTrue(readme_f.exists())
+        self.assertTrue(overview_f.exists())
+        self.assertTrue(data_models_f.exists())
+        self.assertTrue(exec_model_f.exists())
+        self.assertTrue(fn_doc_f.exists())
+        self.assertTrue(var_doc_f.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

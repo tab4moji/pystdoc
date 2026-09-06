@@ -104,6 +104,43 @@ class TestDesigngen(unittest.TestCase):
         self.assertTrue((design_dir / "execution_model.md").exists())
         self.assertTrue((design_dir / "overview.md").exists())
 
+    def test_designgen_regenerates_when_design_file_deleted(self):
+        sample_doc = self.docs_dir / "main.c.fn.main.md"
+        doc_content = (
+            "# Function Documentation: `main`\n\n"
+            "## 1. Design Intent & Purpose\nMain entry point.\n\n"
+            "## 2. Basic Information\n"
+            "- **Name**: `main`\n"
+            "- **Symbol Kind**: `function`\n"
+            "- **Signature / Type**: `int main()`\n\n"
+        )
+        sample_doc.write_text(doc_content, encoding="utf-8")
+
+        # 1st run
+        res1 = run_design_generation(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res1, 0)
+        overview_file = self.test_dir / ".docgen" / "design" / "overview.md"
+        self.assertTrue(overview_file.exists())
+
+        # Delete overview.md
+        overview_file.unlink()
+        self.assertFalse(overview_file.exists())
+
+        # 2nd run: should detect missing file and regenerate
+        res2 = run_design_generation(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res2, 0)
+        self.assertTrue(overview_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

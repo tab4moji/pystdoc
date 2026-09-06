@@ -215,8 +215,50 @@ class TestDocgen(unittest.TestCase):
             sym_main, dummy_file, level=1, language="Japanese"
         )
         self.assertIn("プログラムの最上位エントリーポイント", out_main)
-        self.assertNotIn("上位モジュールから利用される main の設計要素",
-                         out_main)
+        self.assertNotIn(
+            "上位モジュールから利用される main の設計要素", out_main
+        )
+
+    def test_docgen_regenerates_when_symbol_document_deleted(self):
+        c_file = self.src_dir / "calc.c"
+        c_file.write_text(
+            "int multiply(int x, int y) { return x * y; }\n",
+            encoding="utf-8",
+        )
+        # 1st run
+        res1 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res1, 0)
+        sym_doc = (
+            self.test_dir
+            / ".docgen"
+            / "documents"
+            / "src"
+            / "calc.c.fn.multiply.md"
+        )
+        file_doc = (
+            self.test_dir / ".docgen" / "documents" / "src" / "calc.c.md"
+        )
+        self.assertTrue(sym_doc.exists())
+        self.assertTrue(file_doc.exists())
+
+        # Delete symbol doc
+        sym_doc.unlink()
+        self.assertFalse(sym_doc.exists())
+
+        # 2nd run: should detect missing file and regenerate
+        res2 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res2, 0)
+        self.assertTrue(sym_doc.exists())
 
 
 if __name__ == "__main__":
