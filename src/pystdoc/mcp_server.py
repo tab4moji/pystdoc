@@ -4,9 +4,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    from mcp.server.fastmcp import FastMCP
-except ImportError:
-    FastMCP = None  # type: ignore
+    from mcp.server.mcpserver import MCPServer as FastMCP
+except (ImportError, ModuleNotFoundError):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except (ImportError, ModuleNotFoundError):
+        FastMCP = None  # type: ignore
 
 from pystdoc.config import load_config
 from pystdoc.design_engine import run_design_generation
