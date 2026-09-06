@@ -230,23 +230,86 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(cm.exception.code, 0)
             mock_list.assert_called_once()
 
-        # 2. functions / fn / func / funcs / fns
-        for alias in ["functions", "fn", "func", "funcs", "fns"]:
+        # 2. functions / fn / func / function / funcs / fns
+        for alias in ["functions", "fn", "func", "function", "funcs", "fns"]:
             with patch("pystdoc.cli.run_functions", return_value=0) as mock_fn:
                 with self.assertRaises(SystemExit) as cm:
-                    reportgen_main([alias, str(self.test_dir)])
+                    reportgen_main([alias, "--dir", str(self.test_dir)])
                 self.assertEqual(cm.exception.code, 0)
                 mock_fn.assert_called_once()
 
-        # 3. variables / var / vars
-        for alias in ["variables", "var", "vars"]:
+            with patch(
+                "pystdoc.cli.run_description", return_value=0
+            ) as m_desc:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([alias, "my_func", str(self.test_dir)])
+                self.assertEqual(cm.exception.code, 0)
+                m_desc.assert_called_once()
+
+        # 3. variables / var / variable / vars
+        for alias in ["variables", "var", "variable", "vars"]:
             with patch("pystdoc.cli.run_variables", return_value=0) as mock_v:
                 with self.assertRaises(SystemExit) as cm:
-                    reportgen_main([alias, str(self.test_dir)])
+                    reportgen_main([alias, "--dir", str(self.test_dir)])
                 self.assertEqual(cm.exception.code, 0)
                 mock_v.assert_called_once()
 
-        # 4. description / desc
+            with patch(
+                "pystdoc.cli.run_description", return_value=0
+            ) as m_desc:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([alias, "my_var", str(self.test_dir)])
+                self.assertEqual(cm.exception.code, 0)
+                m_desc.assert_called_once()
+
+        # 4. types / type / class / classes / struct / structs
+        for alias in [
+            "types", "type", "class", "classes", "struct", "structs"
+        ]:
+            with patch("pystdoc.cli.run_types", return_value=0) as mock_t:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([alias, "--dir", str(self.test_dir)])
+                self.assertEqual(cm.exception.code, 0)
+                mock_t.assert_called_once()
+
+            with patch(
+                "pystdoc.cli.run_description", return_value=0
+            ) as m_desc:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([alias, "MyClass", str(self.test_dir)])
+                self.assertEqual(cm.exception.code, 0)
+                m_desc.assert_called_once()
+
+        # 5. Directory detection branches in _parse_query_target_and_symbol
+        # 5a. pos1 is dir with slash ending
+        with patch("pystdoc.cli.run_functions", return_value=0) as mock_fn:
+            with self.assertRaises(SystemExit) as cm:
+                reportgen_main(["fn", f"{self.test_dir}/"])
+            self.assertEqual(cm.exception.code, 0)
+            mock_fn.assert_called_once()
+
+        # 5b. pos1 is existing dir
+        with patch("pystdoc.cli.run_functions", return_value=0) as mock_fn:
+            with self.assertRaises(SystemExit) as cm:
+                reportgen_main(["fn", str(self.test_dir)])
+            self.assertEqual(cm.exception.code, 0)
+            mock_fn.assert_called_once()
+
+        # 5c. pos1 is symbol and --dir provided
+        with patch("pystdoc.cli.run_description", return_value=0) as m_desc:
+            with self.assertRaises(SystemExit) as cm:
+                reportgen_main(["fn", "calc", "--dir", str(self.test_dir)])
+            self.assertEqual(cm.exception.code, 0)
+            m_desc.assert_called_once()
+
+        # 5d. pos1 is standalone symbol without directory
+        with patch("pystdoc.cli.run_description", return_value=0) as m_desc:
+            with self.assertRaises(SystemExit) as cm:
+                reportgen_main(["fn", "my_standalone_func"])
+            self.assertEqual(cm.exception.code, 0)
+            m_desc.assert_called_once()
+
+        # 6. description / desc
         for alias in ["description", "desc"]:
             with patch(
                 "pystdoc.cli.run_description", return_value=0
@@ -256,7 +319,7 @@ class TestCLI(unittest.TestCase):
                 self.assertEqual(cm.exception.code, 0)
                 m_desc.assert_called_once()
 
-        # 5. description missing symbol
+        # 7. description missing symbol
         with self.assertRaises(SystemExit) as cm:
             reportgen_main(["desc"])
         self.assertEqual(cm.exception.code, 1)

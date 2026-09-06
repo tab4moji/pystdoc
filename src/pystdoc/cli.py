@@ -3,7 +3,7 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pystdoc
 from pystdoc.db import DocgenDB
@@ -14,6 +14,7 @@ from pystdoc.query import (
     run_description,
     run_functions,
     run_list,
+    run_types,
     run_variables,
 )
 from pystdoc.report_engine import generate_readme_doc
@@ -191,6 +192,49 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
     )
 
 
+def _parse_query_target_and_symbol(
+    sub_args: List[str], prog_name: str, desc: str
+) -> Tuple[Path, Optional[str]]:
+    """Parse symbol name and target directory arguments for query."""
+    parser = argparse.ArgumentParser(
+        prog=f"pystdoc {prog_name}",
+        description=desc,
+    )
+    parser.add_argument(
+        "pos1", nargs="?", default=None, help="Symbol name or target directory"
+    )
+    parser.add_argument(
+        "pos2",
+        nargs="?",
+        default=None,
+        help="Target directory (when pos1 is a symbol)",
+    )
+    parser.add_argument(
+        "--dir", default=None, help="Target project directory"
+    )
+    args = parser.parse_args(sub_args)
+
+    symbol: Optional[str] = None
+    target_path = Path("./")
+
+    if args.dir:
+        target_path = Path(args.dir)
+        if args.pos1:
+            symbol = args.pos1
+    elif args.pos1 and args.pos2:
+        symbol = args.pos1
+        target_path = Path(args.pos2)
+    elif args.pos1:
+        p = Path(args.pos1)
+        if "/" in args.pos1 or "\\" in args.pos1 or p.is_dir():
+            target_path = p
+        else:
+            symbol = args.pos1
+            target_path = Path("./")
+
+    return target_path.resolve(), symbol
+
+
 def reportgen_main(argv: Optional[List[str]] = None) -> None:
     """CLI entry point for `reportgen` and `pystdoc` commands."""
     if argv is None:
@@ -198,8 +242,9 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
 
     sync_cmds = {"sync"}
     list_cmds = {"list", "ls"}
-    fn_cmds = {"functions", "func", "fn", "funcs", "fns"}
-    var_cmds = {"variables", "var", "vars"}
+    fn_cmds = {"functions", "func", "function", "fn", "funcs", "fns"}
+    var_cmds = {"variables", "variable", "var", "vars"}
+    type_cmds = {"types", "type", "class", "classes", "struct", "structs"}
     desc_cmds = {"description", "desc"}
 
     subcmd: Optional[str] = None
@@ -218,6 +263,9 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             sub_args = argv[1:]
         elif first_arg in var_cmds:
             subcmd = "variables"
+            sub_args = argv[1:]
+        elif first_arg in type_cmds:
+            subcmd = "types"
             sub_args = argv[1:]
         elif first_arg in desc_cmds:
             subcmd = "description"
@@ -238,57 +286,42 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         sys.exit(run_list(target.resolve()))
 
     elif subcmd == "functions":
-        parser = argparse.ArgumentParser(
-            prog="pystdoc functions",
-            description="List indexed functions and methods",
+        target, symbol = _parse_query_target_and_symbol(
+            sub_args, "functions", "List functions or show description"
         )
-        parser.add_argument(
-            "dir_pos", nargs="?", default=None, help="Target directory"
-        )
-        parser.add_argument(
-            "--dir", default="./", help="Target project directory"
-        )
-        args = parser.parse_args(sub_args)
-        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
-        sys.exit(run_functions(target.resolve()))
+        if symbol:
+            sys.exit(run_description(target, symbol))
+        else:
+            sys.exit(run_functions(target))
 
     elif subcmd == "variables":
-        parser = argparse.ArgumentParser(
-            prog="pystdoc variables",
-            description="List indexed variables and constants",
+        target, symbol = _parse_query_target_and_symbol(
+            sub_args, "variables", "List variables or show description"
         )
-        parser.add_argument(
-            "dir_pos", nargs="?", default=None, help="Target directory"
+        if symbol:
+            sys.exit(run_description(target, symbol))
+        else:
+            sys.exit(run_variables(target))
+
+    elif subcmd == "types":
+        target, symbol = _parse_query_target_and_symbol(
+            sub_args, "types", "List types/classes or show description"
         )
-        parser.add_argument(
-            "--dir", default="./", help="Target project directory"
-        )
-        args = parser.parse_args(sub_args)
-        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
-        sys.exit(run_variables(target.resolve()))
+        if symbol:
+            sys.exit(run_description(target, symbol))
+        else:
+            sys.exit(run_types(target))
 
     elif subcmd == "description":
-        parser = argparse.ArgumentParser(
-            prog="pystdoc description",
-            description="Show symbol description and location",
+        target, symbol = _parse_query_target_and_symbol(
+            sub_args, "description", "Show symbol description and location"
         )
-        parser.add_argument(
-            "symbol", nargs="?", default=None, help="Symbol name or FQDN"
-        )
-        parser.add_argument(
-            "dir_pos", nargs="?", default=None, help="Target directory"
-        )
-        parser.add_argument(
-            "--dir", default="./", help="Target project directory"
-        )
-        args = parser.parse_args(sub_args)
-        if not args.symbol:
+        if not symbol:
             print(
                 "Error: Please specify a symbol name or FQDN.", file=sys.stderr
             )
             sys.exit(1)
-        target = Path(args.dir_pos if args.dir_pos is not None else args.dir)
-        sys.exit(run_description(target.resolve(), args.symbol))
+        sys.exit(run_description(target, symbol))
 
     # Default / sync: Run unified documentation pipeline
     parser = argparse.ArgumentParser(

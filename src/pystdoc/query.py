@@ -188,6 +188,73 @@ def run_variables(target_dir: Path) -> int:
     return 0
 
 
+def run_types(target_dir: Path) -> int:
+    """List all indexed types, classes, structs, enums from .docgen."""
+    docgen_dir = _get_docgen_dir(target_dir)
+    if not docgen_dir.exists():
+        print(
+            f"Error: .docgen directory not found in {target_dir}. "
+            "Please run 'pystdoc sync' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    symbols: List[Dict[str, Any]] = []
+    db_path = docgen_dir / "index.db"
+    if db_path.exists():
+        try:
+            with DocgenDB(db_path) as db:
+                all_syms = db.get_all_symbols_metadata()
+                for s in all_syms:
+                    k = s.get("kind", "").lower()
+                    if (
+                        get_kind_prefix(k) == "type"
+                        or k in (
+                            "struct",
+                            "class",
+                            "enum",
+                            "interface",
+                            "typedef",
+                            "union",
+                            "type",
+                            "data class",
+                            "object",
+                            "companion object",
+                            "annotation",
+                        )
+                    ):
+                        symbols.append(s)
+        except Exception:
+            symbols = []
+
+    if not symbols:
+        # Fallback to scanning documents directory
+        docs_dir = docgen_dir / "documents"
+        if docs_dir.exists():
+            for p in sorted(docs_dir.glob("*.type.*.md")):
+                name = p.stem.split(".type.", 1)[-1]
+                symbols.append({"name": name, "fqdn": name, "rel_path": ""})
+
+    if not symbols:
+        print("No types or classes found in .docgen.")
+        return 0
+
+    for s in symbols:
+        display = s.get("fqdn") or s.get("name", "")
+        rel_path = s.get("rel_path", "")
+        line_start = s.get("line_start")
+        line_end = s.get("line_end")
+        if rel_path and line_start is not None and line_end is not None:
+            print(f"{display} ({rel_path}:{line_start}:{line_end})")
+        elif rel_path and line_start is not None:
+            print(f"{display} ({rel_path}:{line_start}:{line_start})")
+        elif rel_path:
+            print(f"{display} ({rel_path})")
+        else:
+            print(display)
+    return 0
+
+
 def _find_markdown_doc(
     docs_dir: Path, rel_path: str, sym_name: str, fqdn: str, kind: str
 ) -> Optional[str]:

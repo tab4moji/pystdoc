@@ -93,13 +93,25 @@ pystdoc ls
 
 # List all functions and methods with file & line ranges (<name> (<file>:<from>:<to>))
 pystdoc functions
-# Aliases: fn, func, funcs, fns
+# Aliases: fn, func, function, funcs, fns
 pystdoc fn
+# Inspect specific function description directly (shortcut for desc)
+pystdoc fn processData
 
 # List all variables, constants, and fields
 pystdoc variables
-# Aliases: var, vars
+# Aliases: var, variable, vars
 pystdoc var
+# Inspect specific variable description directly
+pystdoc var CONFIG_TIMEOUT
+
+# List all types, classes, structs, enums, and interfaces
+pystdoc types
+# Aliases: type, class, classes, struct, structs
+pystdoc type
+# Inspect specific type or class description directly
+pystdoc type MainViewModel
+pystdoc class UserModel
 
 # Inspect detailed description, purpose, overview, and signature of a symbol
 pystdoc description Userlib.main
@@ -121,8 +133,9 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.123:11434 --model gemma4-2
 | :--- | :--- | :--- |
 | `sync` | *(default)* | Run full 3-in-1 unified pipeline: parse code, generate symbol docs, architecture design, and project README. |
 | `list` | `ls` | List all indexed source files from `.docgen/`. |
-| `functions` | `fn`, `func`, `funcs`, `fns` | List all indexed functions/methods with source location `(<file>:<from>:<to>)`. |
-| `variables` | `var`, `vars` | List all indexed variables, constants, and data model fields with location. |
+| `functions` | `fn`, `func`, `function`, `funcs`, `fns` | List all functions/methods, or inspect `<name>` description directly (`fn <name>`). |
+| `variables` | `var`, `variable`, `vars` | List all variables/constants/fields, or inspect `<name>` description directly (`var <name>`). |
+| `types` | `type`, `class`, `classes`, `struct`, `structs` | List all types/classes/structs/enums, or inspect `<name>` description directly (`type <name>`). |
 | `description` | `desc` | Display rich purpose, overview, signature, and source location for specified symbol or FQDN. |
 
 ---

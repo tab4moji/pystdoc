@@ -8,6 +8,7 @@ from pystdoc.query import (
     run_description,
     run_functions,
     run_list,
+    run_types,
     run_variables,
 )
 from pystdoc.symbols import Symbol
@@ -87,6 +88,18 @@ def sample_docgen_dir(tmp_path):
         )
         db.save_symbol_metadata(
             "src/Counter.kt::field.count", sym_member, "src/Counter.kt"
+        )
+
+        sym_type = Symbol(
+            name="Point",
+            kind="struct",
+            line_start=1,
+            line_end=8,
+            fqdn="geometry.Point",
+            signature="struct Point { int x; int y; }",
+        )
+        db.save_symbol_metadata(
+            "src/geometry.h::struct.Point", sym_type, "src/geometry.h"
         )
 
     # 3. Markdown files
@@ -511,3 +524,92 @@ def test_find_markdown_doc_nested_fqdn(tmp_path):
         kind="field",
     )
     assert res == "Nested prop doc"
+
+
+def test_run_types_normal(sample_docgen_dir, capsys):
+    ret = run_types(sample_docgen_dir)
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "geometry.Point (src/geometry.h:1:8)" in out
+
+
+def test_run_types_missing_docgen(tmp_path, capsys):
+    ret = run_types(tmp_path)
+    assert ret == 1
+    err = capsys.readouterr().err
+    assert "Error: .docgen directory not found" in err
+
+
+def test_run_types_fallback_documents(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docs_dir = docgen / "documents"
+    docs_dir.mkdir(parents=True)
+
+    (docs_dir / "User.type.User.md").write_text("# User", encoding="utf-8")
+    (docs_dir / "Item.type.Item.md").write_text("# Item", encoding="utf-8")
+
+    ret = run_types(tmp_path)
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "Item" in out
+    assert "User" in out
+
+
+def test_run_types_empty(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    ret = run_types(tmp_path)
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "No types or classes found in .docgen." in out
+
+
+def test_run_types_db_corrupt_fallback(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    # create invalid DB file
+    (docgen / "index.db").write_text("not a sqlite db", encoding="utf-8")
+    ret = run_types(tmp_path)
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "No types or classes found in .docgen." in out
+
+
+def test_run_types_formatting_variations(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    db_path = docgen / "index.db"
+    with DocgenDB(db_path) as db:
+        # no rel_path
+        db.save_symbol_metadata(
+            "uid_t1",
+            Symbol(
+                name="T1", kind="class", line_start=None,
+                line_end=None, fqdn="T1"
+            ),
+            "",
+        )
+        # rel_path + no line
+        db.save_symbol_metadata(
+            "uid_t2",
+            Symbol(
+                name="T2", kind="class", line_start=None,
+                line_end=None, fqdn="T2"
+            ),
+            "src/t2.py",
+        )
+        # rel_path + line_start only
+        db.save_symbol_metadata(
+            "uid_t3",
+            Symbol(
+                name="T3", kind="class", line_start=10,
+                line_end=None, fqdn="T3"
+            ),
+            "src/t3.py",
+        )
+
+    assert run_types(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "T1\n" in out
+    assert "T2 (src/t2.py)\n" in out
+    assert "T3 (src/t3.py:10:10)\n" in out
