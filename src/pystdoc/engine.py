@@ -889,16 +889,17 @@ def run_docgen(
             )
             is_parent_func_updated = (
                 any(
-                    f_info["name"] in [
-                        id_to_node_map[u].symbol.name
-                        for u in actually_updated_symbol_ids
-                        if u in id_to_node_map
-                    ]
-                    for f_info in parent_funcs
-                )
-                or any(
                     caller_id in actually_updated_symbol_ids
                     for caller_id in v_node.direct_caller_ids
+                )
+                or any(
+                    f_node.unique_id in actually_updated_symbol_ids
+                    for f_node in fn_nodes
+                    if f_node.rel_path == v_rel
+                    and (
+                        v_sym.name in f_node.symbol.callees
+                        or v_sym.name in (f_node.symbol.signature or "")
+                    )
                 )
             )
 

@@ -15,8 +15,14 @@ class TestCLI(unittest.TestCase):
         self.test_dir = Path(tempfile.mkdtemp())
         sample_file = self.test_dir / "sample.c"
         sample_file.write_text("int main() { return 0; }\n", encoding="utf-8")
+        self.patcher = patch(
+            "pystdoc.config.get_user_config_path",
+            return_value=self.test_dir / "no_user_cfg.json",
+        )
+        self.patcher.start()
 
     def tearDown(self):
+        self.patcher.stop()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_docgen_cli_success(self):
@@ -136,6 +142,21 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(cm.exception.code, 0)
 
         # Failure without fallback
+        shutil.rmtree(self.test_dir / ".docgen", ignore_errors=True)
+        docgen_args = [
+            "docgen",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+        ]
+        with patch("sys.argv", docgen_args):
+            with self.assertRaises(SystemExit):
+                docgen_main()
+
+        readme_f = self.test_dir / ".docgen" / "README.md"
+        if readme_f.exists():
+            readme_f.unlink()
+
         mock_client_fail = MagicMock()
         mock_client_fail.check_availability.return_value = False
         mock_client_fail.base_url = "http://127.0.0.1:11434/v1"
@@ -325,6 +346,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
     def test_reportgen_cli_llm_unavailable_exit(self):
+        shutil.rmtree(self.test_dir / ".docgen", ignore_errors=True)
         test_args = [
             "reportgen",
             "--dir", str(self.test_dir),
