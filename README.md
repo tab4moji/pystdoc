@@ -58,7 +58,12 @@ your_project/
    - **Java / Kotlin**: AST parsing via `javalang` & `kopyt` with class hierarchy, companion objects, and data classes.
    - **Python & Shell**: AST visitor and generic regex parser with import/call extraction.
    - **Fully Qualified Domain Names (FQDN)**: Disambiguates identical symbol names across large monorepos.
-4. **Standard LLM Options & Multi-Language Support**:
+4. **Feature Location & UI Component Pinpointing (`locate` / `pystdoc_locate_feature`)**:
+   - Pinpoint exact files, functions, UI elements, and line ranges (`Lines X-Y`) from high-level natural language queries (e.g., *"where is the debug notification button"*, *"add auth header"*) without running brute-force `Glob`/`Grep` across the entire project.
+   - Built-in multi-lingual token scoring with automatic boosting for UI elements (`@Composable`, `Button`, `Dialog`, `Activity`, `Modifier`, etc.).
+5. **Impact & Inbound/Outbound Dependency Analysis (`impact` / `pystdoc_trace_impact`)**:
+   - Instant 360-degree dependency tracing: inspect where a symbol is called from (*Inbound Callers / References*) and what it uses (*Outbound Dependencies*) before making breaking code changes or deletions.
+6. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
    - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (e.g. `English`, `Japanese`, `日本語`).
 
@@ -118,6 +123,18 @@ pystdoc description Userlib.main
 # Alias: desc (Supports dot notation, C++ scope resolution, and short names)
 pystdoc desc Userlib::main
 pystdoc desc logMessage
+
+# Locate feature, UI component, or line ranges by natural language query
+pystdoc locate "デバッグ通知ボタンを消したい"
+# Aliases: find, search
+pystdoc find "auth header"
+pystdoc search "MainViewModel"
+
+# Trace inbound callers and outbound dependencies for impact analysis before modifying code
+pystdoc impact MainViewModel.sendNotification
+# Aliases: trace, callers
+pystdoc trace DebugButton
+pystdoc callers processData
 ```
 
 #### 3. Continuous File Change Watch & Auto-Sync (`watch` Mode)
@@ -144,6 +161,8 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | :--- | :--- | :--- |
 | `sync` | *(default)* | Run full 3-in-1 unified pipeline: parse code, generate symbol docs, architecture design, and project README. |
 | `watch` | `monitor` | Continuously watch source directories for changes (dnotify / mtime) and auto-sync on save. |
+| `locate` | `find`, `search` | Locate candidate files, functions, UI components, or line ranges matching a feature description or query. |
+| `impact` | `trace`, `callers` | Trace inbound callers and outbound dependencies of a symbol for impact analysis before modifying or deleting code. |
 | `list` | `ls` | List all indexed source files from `.docgen/`. |
 | `functions` | `fn`, `func`, `function`, `funcs`, `fns` | List all functions/methods, or inspect `<name>` description directly (`fn <name>`). |
 | `variables` | `var`, `variable`, `vars` | List all variables/constants/fields, or inspect `<name>` description directly (`var <name>`). |
@@ -205,6 +224,8 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 
 ### Tools Provided by MCP Server:
 - `pystdoc_get_overview(path)`: Retrieve the executive summary (`README.md`) and high-level architectural overview (`overview.md`) in one call.
+- `pystdoc_locate_feature(query, path)`: Find candidate file locations, UI components, and line ranges (`Lines X-Y`) for a feature or bug fix. **Use this instead of grep/glob.**
+- `pystdoc_trace_impact(symbol, path)`: Trace inbound callers and outbound dependencies of a symbol to determine ripple effects before modifying or deleting code.
 - `pystdoc_search_symbols(query, kind, path)`: Search indexed symbols by keyword/substring, returning their FQDN, file location, and purpose summary.
 - `pystdoc_get_symbol(symbol, path)`: Retrieve rich purpose, overview, signature, line ranges, and markdown snippet for a specific symbol.
 - `pystdoc_list_symbols(kind, path)`: List indexed symbols (`function`, `variable`, `type`, or `all`) with definition line ranges (`file:from:to`).
