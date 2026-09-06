@@ -231,6 +231,29 @@ class TestWatcher(unittest.TestCase):
                 self.assertEqual(cm.exception.code, 0)
                 mock_watch.assert_called_once()
 
+    def test_watcher_logging_options(self):
+        # 1. Quiet watcher
+        w_quiet = DNotifyWatcher(
+            target_dir=self.test_dir,
+            on_change=lambda: None,
+            use_dnotify=False,
+            quiet=True,
+        )
+        with patch("builtins.print") as mock_print:
+            w_quiet._log("test message")
+            mock_print.assert_not_called()
+
+        # 2. Log to stderr
+        w_stderr = DNotifyWatcher(
+            target_dir=self.test_dir,
+            on_change=lambda: None,
+            use_dnotify=False,
+            log_to_stderr=True,
+        )
+        with patch("sys.stderr.write") as mock_write:
+            w_stderr._log("test message")
+            self.assertTrue(mock_write.called)
+
     def test_watcher_blocking_keyboard_interrupt(self):
         watcher = DNotifyWatcher(
             target_dir=self.test_dir,

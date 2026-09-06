@@ -90,8 +90,11 @@ class TestMCPServer(unittest.TestCase):
         self.tmp_dir.cleanup()
 
     def test_create_mcp_server_tools(self):
-        server = create_mcp_server()
+        server = create_mcp_server(target_dir=self.test_dir, auto_watch=True)
         self.assertIsNotNone(server)
+        server_no_watch = create_mcp_server(auto_watch=False)
+        self.assertIsNotNone(server_no_watch)
+        self.assertIsNone(server_no_watch._watcher_manager)
 
     def test_mcp_get_symbol(self):
         server = create_mcp_server()
@@ -355,8 +358,57 @@ class TestMCPServer(unittest.TestCase):
         with patch(
             "pystdoc.mcp_server.create_mcp_server", return_value=mock_server
         ):
-            run_mcp_server()
+            run_mcp_server(target_dir=self.test_dir, auto_watch=True)
             mock_server.run.assert_called_once_with(transport="stdio")
+            mock_server._watcher_manager.stop_all.assert_called_once()
+
+    def test_mcp_watcher_manager(self):
+        from pystdoc.mcp_server import MCPWatcherManager
+        mgr = MCPWatcherManager()
+
+        # Non-directory path should do nothing
+        mgr.watch_directory(self.test_dir / "non_existent")
+        self.assertEqual(len(mgr._watchers), 0)
+
+        # Watch valid directory
+        with patch("pystdoc.mcp_server.DNotifyWatcher") as mock_watcher_cls:
+            mock_w_inst = MagicMock()
+            mock_watcher_cls.return_value = mock_w_inst
+
+            mgr.watch_directory(self.test_dir)
+            self.assertEqual(len(mgr._watchers), 1)
+            mock_w_inst.start.assert_called_once_with(blocking=False)
+
+            # Calling again should be idempotent
+            mgr.watch_directory(self.test_dir)
+            self.assertEqual(len(mgr._watchers), 1)
+
+            # Test on_change callback execution
+            on_change_cb = mock_watcher_cls.call_args[1]["on_change"]
+            with patch("pystdoc.mcp_server.run_docgen") as m_docgen, \
+                 patch("pystdoc.mcp_server.run_design_generation") as m_des, \
+                 patch("pystdoc.mcp_server.generate_readme_doc") as m_rm, \
+                 patch("pystdoc.mcp_server.LLMClient") as mock_client_cls:
+                mock_inst = MagicMock()
+                mock_inst.check_availability.return_value = True
+                mock_client_cls.return_value = mock_inst
+
+                on_change_cb()
+                m_docgen.assert_called_once()
+                m_des.assert_called_once()
+                m_rm.assert_called_once()
+
+            # Test exception in on_change callback
+            with patch(
+                "pystdoc.mcp_server.run_docgen",
+                side_effect=Exception("sync error"),
+            ):
+                on_change_cb()
+
+            # Stop all
+            mgr.stop_all()
+            mock_w_inst.stop.assert_called_once()
+            self.assertEqual(len(mgr._watchers), 0)
 
     def test_mcp_module_import_fallback(self):
         import builtins

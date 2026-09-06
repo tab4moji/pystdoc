@@ -1,7 +1,9 @@
 """MCP (Model Context Protocol) Server for pystdoc."""
 
+import sys
+import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP
@@ -25,15 +27,126 @@ from pystdoc.query import (
     run_variables,
 )
 from pystdoc.report_engine import generate_readme_doc
+from pystdoc.watcher import DNotifyWatcher
 
 
-def create_mcp_server() -> Any:
+class MCPWatcherManager:
+    """Manages background directory watchers for MCP server."""
+
+    def __init__(self, debounce_seconds: float = 1.0):
+        self.debounce_seconds = debounce_seconds
+        self._watchers: Dict[Path, DNotifyWatcher] = {}
+        self._lock = threading.Lock()
+
+    def watch_directory(self, target_dir: Path) -> None:
+        """Register and start a background watcher for target directory."""
+        target_dir = target_dir.resolve()
+        if not target_dir.exists() or not target_dir.is_dir():
+            return
+
+        with self._lock:
+            if target_dir in self._watchers:
+                return
+
+            def _on_change() -> None:
+                try:
+                    cfg = load_config(target_dir)
+                    lang = cfg.get("language", "English")
+                    host = cfg.get("host")
+                    model = cfg.get("model")
+                    token = cfg.get("token")
+                    ctx_size = cfg.get("context_size", 16384)
+                    workers = cfg.get("concurrency", 1)
+                    fallback = cfg.get("allow_fallback", False)
+
+                    # 1. docgen
+                    run_docgen(
+                        target_dir=target_dir,
+                        use_llm=True,
+                        host=host,
+                        model=model,
+                        token=token,
+                        context_size=ctx_size,
+                        concurrency=workers,
+                        language=lang,
+                        allow_fallback=fallback,
+                    )
+                    # 2. designgen
+                    run_design_generation(
+                        target_dir=target_dir,
+                        use_llm=True,
+                        host=host,
+                        model=model,
+                        token=token,
+                        context_size=ctx_size,
+                        language=lang,
+                        allow_fallback=fallback,
+                    )
+                    # 3. reportgen
+                    llm_client = None
+                    client = LLMClient(
+                        host=host,
+                        model=model,
+                        token=token,
+                        context_size=ctx_size,
+                    )
+                    if client.check_availability():
+                        llm_client = client
+
+                    db_path = target_dir / ".docgen" / "index.db"
+                    db = DocgenDB(db_path) if db_path.exists() else None
+                    generate_readme_doc(
+                        target_dir=target_dir,
+                        llm_client=llm_client,
+                        language=lang,
+                        allow_fallback=fallback,
+                        db=db,
+                    )
+                except Exception as e:
+                    print(
+                        f"[MCP Auto-Sync Error for {target_dir}]: {e}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+            watcher = DNotifyWatcher(
+                target_dir=target_dir,
+                on_change=_on_change,
+                debounce_seconds=self.debounce_seconds,
+                log_to_stderr=True,
+            )
+            watcher.start(blocking=False)
+            self._watchers[target_dir] = watcher
+
+    def stop_all(self) -> None:
+        """Stop all running background watchers."""
+        with self._lock:
+            for w in self._watchers.values():
+                w.stop()
+            self._watchers.clear()
+
+
+def create_mcp_server(
+    target_dir: Optional[Path] = None,
+    auto_watch: bool = True,
+) -> Any:
     """Create and configure the FastMCP server instance for pystdoc."""
     if FastMCP is None:
         raise RuntimeError(
             "mcp package is not installed. "
             "Please install with `pip install mcp`."
         )
+
+    watcher_mgr: Optional[MCPWatcherManager] = None
+    if auto_watch:
+        watcher_mgr = MCPWatcherManager()
+        init_dir = (target_dir or Path.cwd()).resolve()
+        if init_dir.exists() and init_dir.is_dir():
+            watcher_mgr.watch_directory(init_dir)
+
+    def _ensure_watching(p: Path) -> None:
+        if watcher_mgr is not None and p.exists() and p.is_dir():
+            watcher_mgr.watch_directory(p)
 
     server_instructions = (
         "pystdoc: Structural & Architecture Documentation MCP Server.\n"
@@ -55,6 +168,7 @@ def create_mcp_server() -> Any:
         "pystdoc",
         instructions=server_instructions,
     )
+    mcp._watcher_manager = watcher_mgr
 
     @mcp.tool(
         name="pystdoc_get_overview",
@@ -66,6 +180,7 @@ def create_mcp_server() -> Any:
     def get_overview(path: str = "./") -> str:
         """Get the executive README and high-level architectural overview."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
             return (
@@ -107,6 +222,7 @@ def create_mcp_server() -> Any:
     ) -> str:
         """Search symbols by query string."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
             return (
@@ -187,6 +303,7 @@ def create_mcp_server() -> Any:
     def get_symbol(symbol: str, path: str = "./") -> str:
         """Get documentation for a specific symbol."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
             return (
@@ -227,6 +344,7 @@ def create_mcp_server() -> Any:
     def list_symbols(kind: str = "all", path: str = "./") -> str:
         """List symbols ('all', 'function', 'variable', 'type')."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
             return (
@@ -273,6 +391,7 @@ def create_mcp_server() -> Any:
     def get_design(section: str = "readme", path: str = "./") -> str:
         """Get high-level architecture design document."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
             return (
@@ -336,6 +455,7 @@ def create_mcp_server() -> Any:
     def list_files(path: str = "./") -> str:
         """List all indexed source code files."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         from io import StringIO
         import sys
         old_stdout = sys.stdout
@@ -361,6 +481,7 @@ def create_mcp_server() -> Any:
     ) -> str:
         """Synchronize documentation suite for codebase."""
         target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
         cfg = load_config(target_dir)
 
         use_llm = not no_llm if no_llm is not None else True
@@ -441,7 +562,14 @@ def create_mcp_server() -> Any:
     return mcp
 
 
-def run_mcp_server() -> None:
+def run_mcp_server(
+    target_dir: Optional[Path] = None,
+    auto_watch: bool = True,
+) -> None:
     """Run FastMCP server on stdio transport."""
-    server = create_mcp_server()
-    server.run(transport="stdio")
+    server = create_mcp_server(target_dir=target_dir, auto_watch=auto_watch)
+    try:
+        server.run(transport="stdio")
+    finally:
+        if hasattr(server, "_watcher_manager") and server._watcher_manager:
+            server._watcher_manager.stop_all()

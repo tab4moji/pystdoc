@@ -365,9 +365,15 @@ class TestCLI(unittest.TestCase):
         for alias in ["mcp", "serve", "server"]:
             with patch("pystdoc.mcp_server.run_mcp_server") as mock_mcp:
                 with self.assertRaises(SystemExit) as cm:
-                    reportgen_main([alias])
+                    reportgen_main([
+                        alias,
+                        "--dir", str(self.test_dir),
+                        "--no-watch",
+                    ])
                 self.assertEqual(cm.exception.code, 0)
-                mock_mcp.assert_called_once()
+                mock_mcp.assert_called_once_with(
+                    target_dir=self.test_dir, auto_watch=False
+                )
 
 
 if __name__ == "__main__":

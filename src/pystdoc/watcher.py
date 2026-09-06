@@ -22,12 +22,16 @@ class DNotifyWatcher:
         debounce_seconds: float = 1.0,
         poll_interval: float = 0.5,
         use_dnotify: bool = True,
+        log_to_stderr: bool = False,
+        quiet: bool = False,
     ):
         self.target_dir = target_dir.resolve()
         self.on_change = on_change
         self.debounce_seconds = debounce_seconds
         self.poll_interval = poll_interval
         self.use_dnotify = use_dnotify
+        self.log_to_stderr = log_to_stderr
+        self.quiet = quiet
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -39,6 +43,13 @@ class DNotifyWatcher:
         self._pending_sync: bool = False
         self._lock = threading.Lock()
         self._sigio_supported = False
+
+    def _log(self, msg: str) -> None:
+        """Print log message to configured output stream."""
+        if self.quiet:
+            return
+        out = sys.stderr if self.log_to_stderr else sys.stdout
+        print(msg, file=out, flush=True)
 
     def _setup_dnotify(self) -> None:
         """Setup Linux dnotify (fcntl.F_NOTIFY) on watched directories."""
@@ -120,13 +131,12 @@ class DNotifyWatcher:
         self._running = True
 
         cnt = len(self._file_snapshots)
-        print(
+        self._log(
             f"=== pystdoc Watcher Active (dnotify/mtime) ===\n"
             f"Watching: {self.target_dir} ({cnt} files)\n"
             f"Debounce: {self.debounce_seconds:.1f}s | "
             f"Poll interval: {self.poll_interval:.1f}s\n"
-            f"Press Ctrl+C to stop.\n",
-            flush=True,
+            f"Press Ctrl+C to stop.\n"
         )
 
         if blocking:
@@ -163,23 +173,22 @@ class DNotifyWatcher:
 
                 if should_sync:
                     cur_time = time.strftime('%H:%M:%S')
-                    print(
+                    self._log(
                         f"\n[{cur_time}] "
-                        f"Source change detected! Starting auto-sync...",
-                        flush=True,
+                        f"Source change detected! Starting auto-sync..."
                     )
                     try:
                         self.on_change()
                     except Exception as e:
-                        print(
-                            f"Error during auto-sync: {e}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                    print(
+                        if not self.quiet:
+                            print(
+                                f"Error during auto-sync: {e}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                    self._log(
                         f"[{time.strftime('%H:%M:%S')}] "
-                        f"Auto-sync complete. Resuming watch...\n",
-                        flush=True,
+                        f"Auto-sync complete. Resuming watch...\n"
                     )
                     self._file_snapshots = self._get_current_snapshot()
                     self._setup_dnotify()
