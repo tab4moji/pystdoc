@@ -5,11 +5,15 @@ import pytest
 from pystdoc.db import DocgenDB
 from pystdoc.query import (
     _find_markdown_doc,
+    locate_features,
     run_description,
     run_functions,
+    run_impact,
     run_list,
+    run_locate,
     run_types,
     run_variables,
+    trace_impact,
 )
 from pystdoc.symbols import Symbol
 
@@ -613,3 +617,286 @@ def test_run_types_formatting_variations(tmp_path, capsys):
     assert "T1\n" in out
     assert "T2 (src/t2.py)\n" in out
     assert "T3 (src/t3.py:10:10)\n" in out
+
+
+def test_locate_features_errors(tmp_path):
+    # Empty query
+    assert "Please provide" in locate_features(tmp_path, "   ")
+
+    # No .docgen dir
+    assert ".docgen directory not found" in locate_features(
+        tmp_path, "some query"
+    )
+
+    # No index.db
+    (tmp_path / ".docgen").mkdir(parents=True)
+    assert "index database (.docgen/index.db) not found" in locate_features(
+        tmp_path, "some query"
+    )
+
+
+def test_locate_features_full(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    db_path = docgen / "index.db"
+
+    # Add design module
+    modules_dir = docgen / "design" / "modules"
+    modules_dir.mkdir(parents=True)
+    (modules_dir / "notification_module.md").write_text(
+        "# Notification Module\nデバッグ通知ボタンを消したい場合のガイド。",
+        encoding="utf-8",
+    )
+
+    with DocgenDB(db_path) as db:
+        sym_btn = Symbol(
+            name="DebugButton",
+            kind="function",
+            line_start=10,
+            line_end=20,
+            fqdn="ui.DebugButton",
+            signature="@Composable fun DebugButton(onClick: () -> Unit)",
+            purpose="Renders the debug notification button.",
+            overview="Displays a button for sending test FCM notifications.",
+        )
+        db.save_symbol_metadata(
+            "src/ui/Debug.kt::func.DebugButton", sym_btn, "src/ui/Debug.kt"
+        )
+        db.save_symbol_cache(
+            "src/ui/Debug.kt::func.DebugButton",
+            {
+                "purpose": sym_btn.purpose,
+                "overview": sym_btn.overview,
+                "direct_callers": ["ui.MainScreen"],
+                "direct_callees": ["fcm.sendDebugNotification"],
+            },
+        )
+
+        sym_line_start_only = Symbol(
+            name="initDebug",
+            kind="function",
+            line_start=5,
+            line_end=None,
+            fqdn="debug.initDebug",
+            signature="fun initDebug()",
+            purpose="Initialize debug tools",
+        )
+        db.save_symbol_metadata(
+            "src/debug/Init.kt::func.initDebug",
+            sym_line_start_only,
+            "src/debug/Init.kt",
+        )
+        db.save_symbol_cache(
+            "src/debug/Init.kt::func.initDebug",
+            {"purpose": "Initialize debug tools"},
+        )
+
+        sym_no_line = Symbol(
+            name="DEBUG_FLAG",
+            kind="const",
+            line_start=None,
+            line_end=None,
+            fqdn="debug.DEBUG_FLAG",
+            signature="const val DEBUG_FLAG = true",
+        )
+        db.save_symbol_metadata(
+            "src/debug/Const.kt::const.DEBUG_FLAG",
+            sym_no_line,
+            "src/debug/Const.kt",
+        )
+
+    # 1. Locate UI feature (Japanese query)
+    res_ja = locate_features(tmp_path, "デバッグ通知ボタンを消したい")
+    assert "DebugButton" in res_ja
+    assert "src/ui/Debug.kt" in res_ja
+    assert "Lines 10-20" in res_ja
+    assert "notification_module" in res_ja
+
+    # 2. Locate line start only
+    res_init = locate_features(tmp_path, "initDebug")
+    assert "Line 5" in res_init
+
+    # 3. Locate no line
+    res_const = locate_features(tmp_path, "DEBUG_FLAG")
+    assert "src/debug/Const.kt" in res_const
+
+    # 4. Locate no match with module hint
+    res_nomatch = locate_features(tmp_path, "notification")
+    assert "notification_module" in res_nomatch
+
+    # 5. Locate completely unknown
+    (modules_dir / "notification_module.md").unlink()
+    res_none = locate_features(tmp_path, "completely_unknown_xyz_123")
+    assert "No specific symbols found matching" in res_none
+
+    # 6. run_locate CLI
+    ret = run_locate(tmp_path, "DebugButton")
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "DebugButton" in out
+
+
+def test_trace_impact_errors(tmp_path):
+    # Empty symbol
+    assert "Please specify" in trace_impact(tmp_path, "   ")
+
+    # No .docgen dir
+    assert ".docgen directory not found" in trace_impact(tmp_path, "MySymbol")
+
+    # No index.db
+    (tmp_path / ".docgen").mkdir(parents=True)
+    assert "index database (.docgen/index.db) not found" in trace_impact(
+        tmp_path, "MySymbol"
+    )
+
+
+def test_trace_impact_full(tmp_path, capsys):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    db_path = docgen / "index.db"
+
+    with DocgenDB(db_path) as db:
+        sym_btn = Symbol(
+            name="DebugButton",
+            kind="function",
+            line_start=10,
+            line_end=20,
+            fqdn="ui.DebugButton",
+            signature="@Composable fun DebugButton()",
+            purpose="Debug trigger button.",
+            referencing_functions=["ui.MainScreen", "ui.TestPanel"],
+            callees=["fcm.sendDebugNotification"],
+        )
+        db.save_symbol_metadata(
+            "src/ui/Debug.kt::func.DebugButton", sym_btn, "src/ui/Debug.kt"
+        )
+        db.save_symbol_cache(
+            "src/ui/Debug.kt::func.DebugButton",
+            {
+                "purpose": sym_btn.purpose,
+            },
+        )
+
+        sym_leaf = Symbol(
+            name="leafNode",
+            kind="function",
+            line_start=50,
+            line_end=None,
+            fqdn="core.leafNode",
+        )
+        db.save_symbol_metadata(
+            "src/core/Leaf.kt::func.leafNode", sym_leaf, "src/core/Leaf.kt"
+        )
+        db.save_symbol_cache(
+            "src/core/Leaf.kt::func.leafNode",
+            {"direct_callers": [], "direct_callees": []},
+        )
+
+    # 1. Trace symbol with callers and callees
+    res_btn = trace_impact(tmp_path, "ui.DebugButton")
+    assert "Impact & Dependency Analysis for `ui.DebugButton`" in res_btn
+    assert "src/ui/Debug.kt" in res_btn
+    assert "Lines 10-20" in res_btn
+    assert "ui.MainScreen" in res_btn
+    assert "ui.TestPanel" in res_btn
+    assert "fcm.sendDebugNotification" in res_btn
+
+    # 2. Trace leaf symbol without callers/callees
+    res_leaf = trace_impact(tmp_path, "leafNode")
+    assert "Line 50" in res_leaf
+    assert "No direct internal callers detected" in res_leaf
+    assert "No outbound symbol dependencies" in res_leaf
+
+    # 3. Trace non-existent symbol
+    res_nf = trace_impact(tmp_path, "NonExistentSymbol")
+    assert "not found in index database" in res_nf
+
+    # 4. run_impact CLI
+    ret = run_impact(tmp_path, "DebugButton")
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "Impact & Dependency Analysis" in out
+
+
+def test_locate_and_trace_coverage_branches(tmp_path):
+    docgen = tmp_path / ".docgen"
+    docgen.mkdir(parents=True)
+    db_path = docgen / "index.db"
+
+    # Add design module
+    modules_dir = docgen / "design" / "modules"
+    modules_dir.mkdir(parents=True)
+    bad_module = modules_dir / "bad.md"
+    bad_module.write_text("Test module content", encoding="utf-8")
+
+    with DocgenDB(db_path) as db:
+        sym_complex = Symbol(
+            name="processData",
+            kind="method",
+            line_start=None,
+            line_end=None,
+            fqdn="data.processData",
+            signature="def processData(val: int) -> bool",
+            purpose="Process incoming stream records",
+            overview="Transforms and filters raw data items",
+            referencing_functions=["ui.Handler"],
+            callees=["db.save"],
+        )
+        db.save_symbol_metadata(
+            "src/data/Process.py::func.processData",
+            sym_complex,
+            "src/data/Process.py",
+        )
+        db.save_symbol_cache(
+            "src/data/Process.py::func.processData",
+            {
+                "purpose": sym_complex.purpose,
+                "overview": sym_complex.overview,
+            },
+        )
+
+    # 1. Search matches purpose (substring & tokens)
+    res_purp = locate_features(tmp_path, "incoming stream records")
+    assert "processData" in res_purp
+
+    # 2. Search matches overview
+    res_ovw = locate_features(tmp_path, "filters raw data")
+    assert "processData" in res_ovw
+
+    # 3. Search matches token in sname and sig
+    res_token = locate_features(tmp_path, "processData int")
+    assert "processData" in res_token
+
+    # 4. Search matches token in signature and test 1-char token
+    res_sig = locate_features(tmp_path, "def processData(val: int) a")
+    assert "processData" in res_sig
+
+    # 5. Trace symbol with callers and callees and purpose
+    res_trace = trace_impact(tmp_path, "processData")
+    assert "data.processData" in res_trace
+    assert "Process incoming stream records" in res_trace
+    assert "ui.Handler" in res_trace
+    assert "db.save" in res_trace
+
+    # 6. Test corrupt JSON handling in trace_impact
+    with DocgenDB(db_path) as db:
+        cur = db.conn.cursor()
+        cur.execute(
+            "UPDATE symbols_metadata SET referencing_funcs_json = ?, "
+            "callees_json = ? WHERE unique_id = ?",
+            (
+                "invalid json",
+                "invalid json",
+                "src/data/Process.py::func.processData",
+            ),
+        )
+        db.conn.commit()
+
+    res_corrupt = trace_impact(tmp_path, "processData")
+    assert "No direct internal callers detected" in res_corrupt
+
+    # 7. Test exception when reading module doc
+    from unittest.mock import patch
+    with patch.object(Path, "read_text", side_effect=OSError("Read error")):
+        res_err = locate_features(tmp_path, "processData")
+        assert "processData" in res_err

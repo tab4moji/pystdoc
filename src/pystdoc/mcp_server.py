@@ -20,11 +20,13 @@ from pystdoc.engine import run_docgen
 from pystdoc.llm_client import LLMClient
 from pystdoc.query import (
     _get_docgen_dir,
+    locate_features,
     run_description,
     run_functions,
     run_list,
     run_types,
     run_variables,
+    trace_impact,
 )
 from pystdoc.report_engine import generate_readme_doc
 from pystdoc.watcher import DNotifyWatcher
@@ -178,14 +180,20 @@ def create_mcp_server(
         "Guidelines for LLM assistant:\n"
         "1. To understand or explain the system/project, call "
         "`pystdoc_get_overview` or `pystdoc_get_design(section='readme')`.\n"
-        "2. To explore architecture, data models, or execution flow, call "
+        "2. When asked where to modify code, how to implement/delete a "
+        "feature, or where a specific UI/button/logic is located, "
+        "DO NOT run grep/glob. Instead, call "
+        "`pystdoc_locate_feature(query=...)`.\n"
+        "3. To trace callers, references, and dependencies before modifying "
+        "or deleting code, call `pystdoc_trace_impact(symbol=...)`.\n"
+        "4. To explore architecture, data models, or execution flow, call "
         "`pystdoc_get_design` with 'overview', 'data_models', or "
         "'execution_model'.\n"
-        "3. To find classes, functions, or variables, call "
+        "5. To find classes, functions, or variables, call "
         "`pystdoc_search_symbols` or `pystdoc_list_symbols`.\n"
-        "4. To inspect signature and doc for a specific symbol, call "
+        "6. To inspect signature and doc for a specific symbol, call "
         "`pystdoc_get_symbol`.\n"
-        "5. If documentation is missing or outdated, call `pystdoc_sync` "
+        "7. If documentation is missing or outdated, call `pystdoc_sync` "
         "to generate full docs."
     )
 
@@ -194,6 +202,35 @@ def create_mcp_server(
         instructions=server_instructions,
     )
     mcp._watcher_manager = watcher_mgr
+
+    @mcp.tool(
+        name="pystdoc_locate_feature",
+        description=(
+            "Find exact files, functions, UI components, or line ranges that "
+            "need to be modified for a feature request, UI change, or bug fix "
+            "(e.g. 'delete debug button', 'add auth header'). "
+            "Use this INSTEAD of grep/glob."
+        ),
+    )
+    def locate_feature(query: str, path: str = "./") -> str:
+        """Find candidate locations and line ranges for a feature or UI."""
+        target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
+        return locate_features(target_dir, query)
+
+    @mcp.tool(
+        name="pystdoc_trace_impact",
+        description=(
+            "Trace callers, references, and outbound dependencies of a "
+            "symbol to determine what other files/functions are affected "
+            "before modifying or deleting code."
+        ),
+    )
+    def trace_symbol_impact(symbol: str, path: str = "./") -> str:
+        """Trace callers and dependencies of a symbol for impact analysis."""
+        target_dir = Path(path).resolve()
+        _ensure_watching(target_dir)
+        return trace_impact(target_dir, symbol)
 
     @mcp.tool(
         name="pystdoc_get_overview",

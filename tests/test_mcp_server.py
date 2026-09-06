@@ -435,6 +435,36 @@ class TestMCPServer(unittest.TestCase):
         importlib.reload(pystdoc.mcp_server)
         self.assertIsNotNone(pystdoc.mcp_server.FastMCP)
 
+    def test_mcp_locate_feature(self):
+        server = create_mcp_server()
+        tool_fn = None
+        for t in server._tool_manager.list_tools():
+            if t.name == "pystdoc_locate_feature":
+                tool_fn = server._tool_manager.get_tool(t.name).fn
+                break
+        self.assertIsNotNone(tool_fn)
+
+        with patch("pystdoc.mcp_server.locate_features") as mock_loc:
+            mock_loc.return_value = "Mocked Locate Result"
+            res = tool_fn(query="debug button", path=str(self.test_dir))
+            self.assertEqual(res, "Mocked Locate Result")
+            mock_loc.assert_called_once_with(self.test_dir, "debug button")
+
+    def test_mcp_trace_impact(self):
+        server = create_mcp_server()
+        tool_fn = None
+        for t in server._tool_manager.list_tools():
+            if t.name == "pystdoc_trace_impact":
+                tool_fn = server._tool_manager.get_tool(t.name).fn
+                break
+        self.assertIsNotNone(tool_fn)
+
+        with patch("pystdoc.mcp_server.trace_impact") as mock_imp:
+            mock_imp.return_value = "Mocked Impact Result"
+            res = tool_fn(symbol="DebugButton", path=str(self.test_dir))
+            self.assertEqual(res, "Mocked Impact Result")
+            mock_imp.assert_called_once_with(self.test_dir, "DebugButton")
+
 
 if __name__ == "__main__":
     unittest.main()

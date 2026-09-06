@@ -1,5 +1,6 @@
 """Query utilities for inspecting .docgen documentation index."""
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -408,4 +409,303 @@ def run_description(target_dir: Path, query: str) -> int:
             else:
                 print(f"No detailed markdown document found for `{fqdn}`.")
 
+    return 0
+
+
+def locate_features(target_dir: Path, query: str, limit: int = 10) -> str:
+    """Find exact files, functions, UI components, or line ranges."""
+    clean_query = query.strip()
+    if not clean_query:
+        return "Error: Please provide a feature description or search query."
+
+    docgen_dir = _get_docgen_dir(target_dir)
+    if not docgen_dir.exists():
+        return (
+            f"Error: .docgen directory not found in {target_dir}. "
+            "Please run pystdoc_sync first."
+        )
+
+    db_path = docgen_dir / "index.db"
+    if not db_path.exists():
+        return "Error: index database (.docgen/index.db) not found."
+
+    import re
+    words = set(
+        re.findall(
+            r"[\w\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+",
+            clean_query.lower(),
+        )
+    )
+    raw_q = clean_query.lower()
+
+    db = DocgenDB(db_path)
+    scored_results: List[Any] = []
+    try:
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT m.unique_id, m.name, m.kind, m.rel_path, "
+            "m.line_start, m.line_end, m.fqdn, m.signature, "
+            "m.referencing_funcs_json, m.callees_json, "
+            "c.purpose, c.overview "
+            "FROM symbols_metadata m "
+            "LEFT JOIN symbol_cache c ON m.unique_id = c.unique_id"
+        )
+        rows = cur.fetchall()
+
+        for row in rows:
+            (
+                uid, sname, skind, rpath,
+                lstart, lend, fqdn, sig,
+                ref_funcs_raw, callees_raw,
+                purp, ovw
+            ) = row
+            sname_l = (sname or "").lower()
+            fqdn_l = (fqdn or "").lower()
+            rpath_l = (rpath or "").lower()
+            sig_l = (sig or "").lower()
+            purp_l = (purp or "").lower()
+            ovw_l = (ovw or "").lower()
+            skind_l = (skind or "").lower()
+
+            score = 0.0
+            # 1. Exact / Substring query matches
+            if raw_q in sname_l or raw_q in fqdn_l:
+                score += 50.0
+            if raw_q in purp_l:
+                score += 35.0
+            if raw_q in ovw_l:
+                score += 20.0
+            if raw_q in sig_l:
+                score += 25.0
+
+            # 2. Token matches
+            for w in words:
+                if len(w) < 2 and not any(
+                    '\u3040' <= c <= '\u9fff' for c in w
+                ):
+                    continue
+                if w in sname_l:
+                    score += 15.0
+                if w in fqdn_l:
+                    score += 10.0
+                if w in purp_l:
+                    score += 10.0
+                if w in ovw_l:
+                    score += 5.0
+                if w in rpath_l:
+                    score += 8.0
+                if w in sig_l:
+                    score += 6.0
+
+            # 3. Boost UI elements if query mentions button/ui/view/screen/etc.
+            ui_keywords = (
+                "button", "ui", "screen", "view", "dialog", "click", "tap",
+                "画面", "ボタン", "表示", "削除", "デバッグ", "debug", "test"
+            )
+            is_ui_query = any(k in raw_q for k in ui_keywords)
+            if is_ui_query:
+                if any(
+                    k in sname_l or k in fqdn_l or k in skind_l
+                    for k in (
+                        "button", "view", "compose", "screen", "dialog",
+                        "activity", "fragment", "ui"
+                    )
+                ):
+                    score += 15.0
+                if any(
+                    k in sig_l
+                    for k in (
+                        "composable", "button", "onclick", "modifier",
+                        "setonclicklistener"
+                    )
+                ):
+                    score += 20.0
+
+            if score > 0.0:
+                sym_data = {
+                    "unique_id": uid,
+                    "name": sname,
+                    "kind": skind,
+                    "rel_path": rpath,
+                    "line_start": lstart,
+                    "line_end": lend,
+                    "fqdn": fqdn,
+                    "signature": sig,
+                    "purpose": purp,
+                    "overview": ovw,
+                }
+                scored_results.append((score, sym_data, purp or ovw or ""))
+
+        # Check module design docs for additional context
+        design_modules_dir = docgen_dir / "design" / "modules"
+        module_matches: List[str] = []
+        if design_modules_dir.exists():
+            for mod_file in sorted(design_modules_dir.glob("*.md")):
+                try:
+                    mod_text = mod_file.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                    mod_text_l = mod_text.lower()
+                    if raw_q in mod_text_l or any(
+                        w in mod_text_l for w in words if len(w) >= 3
+                    ):
+                        module_matches.append(mod_file.stem)
+                except Exception:
+                    pass
+
+        if not scored_results:
+            mod_hint = (
+                f" Related design modules: {', '.join(module_matches)}."
+                if module_matches
+                else ""
+            )
+            return (
+                f"No specific symbols found matching '{query}'.{mod_hint} "
+                "Try searching with symbol names via `pystdoc_search_symbols`."
+            )
+
+        # Sort descending by score
+        scored_results.sort(key=lambda x: x[0], reverse=True)
+        top_results = scored_results[:limit]
+
+        output_lines = [
+            f"### Implementation / Feature Locations for '{query}':",
+            f"Found {len(scored_results)} candidate location(s) "
+            f"(showing top {len(top_results)}):\n",
+        ]
+
+        for rank, (_, sym, desc) in enumerate(top_results, 1):
+            disp_name = sym.get("fqdn") or sym.get("name")
+            rpath = sym.get("rel_path") or "Unknown"
+            lstart = sym.get("line_start")
+            lend = sym.get("line_end")
+            kind = sym.get("kind", "symbol")
+
+            loc_str = f"`{rpath}`"
+            if lstart is not None and lend is not None:
+                loc_str += f" (Lines {lstart}-{lend})"
+            elif lstart is not None:
+                loc_str += f" (Line {lstart})"
+
+            desc_str = f" - **Purpose**: {desc}" if desc else ""
+            sig = sym.get("signature")
+            sig_str = f"\n   - **Signature**: `{sig}`" if sig else ""
+
+            output_lines.append(
+                f"{rank}. **{loc_str}**\n"
+                f"   - **Symbol**: `{disp_name}` (`{kind}`){desc_str}{sig_str}"
+            )
+
+        if module_matches:
+            output_lines.append(
+                f"\n- **Relevant Architecture Module(s)**: "
+                f"{', '.join(module_matches)}"
+            )
+
+        return "\n".join(output_lines)
+    finally:
+        db.close()
+
+
+def trace_impact(target_dir: Path, symbol_query: str) -> str:
+    """Trace inbound callers and outbound dependencies for impact analysis."""
+    clean_sym = symbol_query.strip()
+    if not clean_sym:
+        return "Error: Please specify a symbol name or FQDN to trace."
+
+    docgen_dir = _get_docgen_dir(target_dir)
+    if not docgen_dir.exists():
+        return (
+            f"Error: .docgen directory not found in {target_dir}. "
+            "Please run pystdoc_sync first."
+        )
+
+    db_path = docgen_dir / "index.db"
+    if not db_path.exists():
+        return "Error: index database (.docgen/index.db) not found."
+
+    db = DocgenDB(db_path)
+    try:
+        symbols = db.find_symbols_by_query(clean_sym)
+        if not symbols:
+            return f"Symbol '{clean_sym}' not found in index database."
+
+        sym = symbols[0]
+        uid = sym.get("unique_id", "")
+        sname = sym.get("name", "")
+        fqdn = sym.get("fqdn") or sname
+        kind = sym.get("kind", "symbol")
+        rpath = sym.get("rel_path", "")
+        lstart = sym.get("line_start")
+        lend = sym.get("line_end")
+
+        loc_str = f"`{rpath}`"
+        if lstart is not None and lend is not None:
+            loc_str += f" (Lines {lstart}-{lend})"
+        elif lstart is not None:
+            loc_str += f" (Line {lstart})"
+
+        cache = db.load_symbol_cache(uid) if uid else {}
+        purpose = cache.get("purpose", "") if cache else ""
+
+        ref_funcs_raw = sym.get("referencing_funcs_json")
+        callees_raw = sym.get("callees_json")
+        callers: List[str] = []
+        if ref_funcs_raw:
+            try:
+                callers = json.loads(ref_funcs_raw)
+            except Exception:
+                pass
+        callees: List[str] = []
+        if callees_raw:
+            try:
+                callees = json.loads(callees_raw)
+            except Exception:
+                pass
+
+        lines = [
+            f"### Impact & Dependency Analysis for `{fqdn}`:",
+            f"- **Kind**: `{kind}`",
+            f"- **Location**: {loc_str}",
+        ]
+        if purpose:
+            lines.append(f"- **Purpose**: {purpose}")
+
+        lines.append(
+            "\n#### 🔼 Inbound Callers / References (Where this is used):"
+        )
+        if callers:
+            for c in callers:
+                lines.append(f"- `{c}`")
+        else:
+            lines.append(
+                "- *No direct internal callers detected "
+                "(entry point, top-level, or uncalled).*"
+            )
+
+        lines.append(
+            "\n#### 🔽 Outbound Dependencies (What this calls/uses):"
+        )
+        if callees:
+            for c in callees:
+                lines.append(f"- `{c}`")
+        else:
+            lines.append("- *No outbound symbol dependencies.*")
+
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+def run_locate(target_dir: Path, query: str) -> int:
+    """CLI handler for locate command."""
+    res = locate_features(target_dir, query)
+    print(res)
+    return 0
+
+
+def run_impact(target_dir: Path, symbol: str) -> int:
+    """CLI handler for impact command."""
+    res = trace_impact(target_dir, symbol)
+    print(res)
     return 0

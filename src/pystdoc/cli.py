@@ -14,7 +14,9 @@ from pystdoc.llm_client import LLMClient
 from pystdoc.query import (
     run_description,
     run_functions,
+    run_impact,
     run_list,
+    run_locate,
     run_types,
     run_variables,
 )
@@ -359,6 +361,8 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     var_cmds = {"variables", "variable", "var", "vars"}
     type_cmds = {"types", "type", "class", "classes", "struct", "structs"}
     desc_cmds = {"description", "desc"}
+    locate_cmds = {"locate", "find", "search"}
+    impact_cmds = {"impact", "trace", "callers"}
     mcp_cmds = {"mcp", "serve", "server"}
 
     subcmd: Optional[str] = None
@@ -386,6 +390,12 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             sub_args = argv[1:]
         elif first_arg in desc_cmds:
             subcmd = "description"
+            sub_args = argv[1:]
+        elif first_arg in locate_cmds:
+            subcmd = "locate"
+            sub_args = argv[1:]
+        elif first_arg in impact_cmds:
+            subcmd = "impact"
             sub_args = argv[1:]
         elif first_arg in mcp_cmds:
             subcmd = "mcp"
@@ -475,6 +485,30 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             )
             sys.exit(1)
         sys.exit(run_description(target, symbol))
+
+    elif subcmd == "locate":
+        target, query_str = _parse_query_target_and_symbol(
+            sub_args, "locate", "Locate feature, UI component or line range"
+        )
+        if not query_str:
+            print(
+                "Error: Please specify a search query or feature description.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        sys.exit(run_locate(target, query_str))
+
+    elif subcmd == "impact":
+        target, symbol = _parse_query_target_and_symbol(
+            sub_args, "impact", "Trace callers and callees for impact analysis"
+        )
+        if not symbol:
+            print(
+                "Error: Please specify a symbol name or FQDN to trace.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        sys.exit(run_impact(target, symbol))
 
     # Default / sync: Run unified documentation pipeline
     parser = argparse.ArgumentParser(

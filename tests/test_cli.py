@@ -401,6 +401,44 @@ class TestCLI(unittest.TestCase):
                     target_dir=self.test_dir, auto_watch=False
                 )
 
+    def test_reportgen_cli_locate_subcommand(self):
+        for alias in ["locate", "find", "search"]:
+            with patch("pystdoc.cli.run_locate", return_value=0) as mock_loc:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([
+                        alias,
+                        "--dir", str(self.test_dir),
+                        "debug_button",
+                    ])
+                self.assertEqual(cm.exception.code, 0)
+                mock_loc.assert_called_once_with(
+                    self.test_dir, "debug_button"
+                )
+
+        # Missing query
+        with self.assertRaises(SystemExit) as cm:
+            reportgen_main(["locate", "--dir", str(self.test_dir)])
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_reportgen_cli_impact_subcommand(self):
+        for alias in ["impact", "trace", "callers"]:
+            with patch("pystdoc.cli.run_impact", return_value=0) as mock_imp:
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main([
+                        alias,
+                        "--dir", str(self.test_dir),
+                        "MySymbol",
+                    ])
+                self.assertEqual(cm.exception.code, 0)
+                mock_imp.assert_called_once_with(
+                    self.test_dir, "MySymbol"
+                )
+
+        # Missing symbol
+        with self.assertRaises(SystemExit) as cm:
+            reportgen_main(["impact", "--dir", str(self.test_dir)])
+        self.assertEqual(cm.exception.code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
