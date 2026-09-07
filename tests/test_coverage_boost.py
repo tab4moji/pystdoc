@@ -1590,6 +1590,18 @@ class TestCoverageBoost(unittest.TestCase):
         candidates_simple = get_candidate_doc_filenames(node_simple)
         self.assertIn("main.py.fn.top_fn.md", candidates_simple)
 
+    def test_flatten_symbols_duplicate(self):
+        sym1 = Symbol(name="get", kind="function", line_start=1, line_end=5)
+        sym2 = Symbol(name="get", kind="function", line_start=10, line_end=15)
+        nodes = flatten_symbols(
+            [sym1, sym2],
+            Path("Main.kt"),
+            Path("/tmp/Main.kt"),
+        )
+        self.assertEqual(len(nodes), 2)
+        self.assertEqual(nodes[0].unique_id, "Main.kt::fn.get")
+        self.assertEqual(nodes[1].unique_id, "Main.kt::fn.get#2")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,7 @@ def test_render_pip_bar():
 
 def test_format_progress_line():
     line_tty = format_progress_line(
-        phase_label="Step 1/3: docgen",
+        phase_label="Step 1/4 docgen",
         current=5,
         total=10,
         extra="src/main.py",
@@ -64,7 +64,7 @@ def test_format_progress_line():
         is_tty=True,
         width=10,
     )
-    assert "[Step 1/3: docgen]" in line_tty
+    assert "[Step 1/4 docgen]" in line_tty
     assert "[━━━━━     ]" in line_tty
     assert "5/10 ( 50.0%)" in line_tty
     assert "[Done in   1.2s]" in line_tty
@@ -72,20 +72,20 @@ def test_format_progress_line():
 
     # TTY with empty extra
     line_tty_empty = format_progress_line(
-        phase_label="Step 1/3: docgen",
+        phase_label="Step 1/4 docgen",
         current=5,
         total=10,
         extra="",
         is_tty=True,
         width=10,
     )
-    assert "[Step 1/3: docgen]" in line_tty_empty
+    assert "[Step 1/4 docgen]" in line_tty_empty
     assert line_tty_empty.endswith("5/10 ( 50.0%)")
 
     # TTY with long extra (testing truncation)
     long_extra = "a" * 200
     line_tty_long = format_progress_line(
-        phase_label="Step 1/3: docgen",
+        phase_label="Step 1/4 docgen",
         current=5,
         total=10,
         extra=long_extra,
@@ -95,31 +95,31 @@ def test_format_progress_line():
     assert "..." in line_tty_long
 
     line_nontty = format_progress_line(
-        phase_label="Step 1/3: docgen",
+        phase_label="Step 1/4 docgen",
         current=10,
         total=10,
         extra="src/main.py",
         elapsed=None,
         is_tty=False,
     )
-    assert "[Step 1/3: docgen]" in line_nontty
+    assert "[Step 1/4 docgen]" in line_nontty
     assert "━" not in line_nontty
     assert "10/10 (100.0%)" in line_nontty
     assert ": src/main.py" in line_nontty
 
     line_def = format_progress_line(
-        phase_label="Step 2/3: designgen",
+        phase_label="Step 3/4 designgen",
         current=0,
         total=0,
     )
-    assert "[Step 2/3: designgen]" in line_def
+    assert "[Step 3/4 designgen]" in line_def
     assert "0/0 (100.0%)" in line_def
 
 
 def test_phase_progress_tracker():
     stream = io.StringIO()
     tracker = PhaseProgressTracker(
-        phase_label="Step 1/3: docgen",
+        phase_label="Step 1/4 docgen",
         total=5,
         is_tty=True,
         width=10,
@@ -146,7 +146,7 @@ def test_phase_progress_tracker():
     tracker.finish()
 
     tracker2 = PhaseProgressTracker(
-        "Step 2/3: designgen", total=100, is_tty=False
+        "Step 3/4 designgen", total=100, is_tty=False
     )
     threads = []
     for _ in range(10):

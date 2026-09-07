@@ -917,7 +917,7 @@ def run_design_generation(
     total_mods = len(modules)
     total_design_steps = 1 + 1 + total_mods + 1
     tracker = PhaseProgressTracker(
-        phase_label="Step 2/3: designgen",
+        phase_label="Step 3/4 designgen",
         total=total_design_steps,
         is_tty=is_tty,
     )

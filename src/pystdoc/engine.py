@@ -475,7 +475,6 @@ def run_docgen(
 
         # 3. Pass 1: Level-by-Level DAG parallel processing
         level_groups = order_symbols_by_levels(all_symbol_nodes)
-        total_levels = len(level_groups)
         resolved_symbols_map: Dict[str, SymbolNode] = {
             node.unique_id: node for node in all_symbol_nodes
         }
@@ -528,15 +527,9 @@ def run_docgen(
         dirty_lock = threading.Lock()
         print_lock = threading.Lock()
         tracker = PhaseProgressTracker(
-            phase_label="Step 1/3: docgen",
+            phase_label="Step 1/4 docgen",
             total=total_symbols_count,
             is_tty=is_tty,
-        )
-
-        print(
-            f"[3/5] Pass 1: Level-by-Level analysis "
-            f"(Total {total_levels} levels, Workers: {concurrency})...",
-            flush=True,
         )
 
         def process_single_node(node: SymbolNode) -> None:
@@ -718,6 +711,7 @@ def run_docgen(
                 sym,
                 prefix_name=prefix_in_unique_id,
                 language=norm_lang,
+                symbol_id_override=raw_id if raw_id else None,
             )
 
         # Process Level by Level
@@ -761,19 +755,13 @@ def run_docgen(
             )
         ]
         total_var_count = len(var_nodes)
-        print(
-            f"[4/5] Pass 2: Top-down contextual refinement "
-            f"({total_var_count} data symbols)...",
-            flush=True,
-        )
-
         fn_nodes = [
             n
             for n in all_symbol_nodes
             if get_kind_prefix(n.symbol.kind) == "fn"
         ]
         var_tracker = PhaseProgressTracker(
-            phase_label="Step 1/3: docgen (data)",
+            phase_label="Step 2/4 docgen (data)",
             total=total_var_count,
             is_tty=is_tty,
         )

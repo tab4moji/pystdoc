@@ -21,11 +21,15 @@ def get_kind_prefix(kind: str) -> str:
         "struct",
         "class",
         "enum",
+        "interface",
+        "annotation",
+        "object",
         "typedef",
         "type_alias",
         "type",
         "field",
         "member",
+        "property",
     ):
         return "type"
     elif kind_lower in ("enum_constant", "constant", "macro", "const"):

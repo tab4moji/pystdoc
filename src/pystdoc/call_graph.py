@@ -4,7 +4,7 @@ import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from pystdoc.symbols import Symbol, get_kind_prefix
 
@@ -27,14 +27,22 @@ def flatten_symbols(
     rel_path: Path,
     full_path: Path,
     prefix: str = "",
+    seen_ids: Optional[Dict[str, int]] = None,
 ) -> List[SymbolNode]:
     """Recursively collect symbols into flat list with FQDN and prefixes."""
+    if seen_ids is None:
+        seen_ids = defaultdict(int)
     nodes: List[SymbolNode] = []
     for sym in symbols:
         k_prefix = get_kind_prefix(sym.kind)
         raw_name = f"{prefix}{sym.name}" if prefix else sym.name
         identifier = f"{k_prefix}.{raw_name}"
-        uid = f"{rel_path.as_posix()}::{identifier}"
+        base_uid = f"{rel_path.as_posix()}::{identifier}"
+        seen_ids[base_uid] += 1
+        if seen_ids[base_uid] == 1:
+            uid = base_uid
+        else:
+            uid = f"{base_uid}#{seen_ids[base_uid]}"
 
         base_mod = rel_path.with_suffix("").as_posix().replace("/", ".")
         fqdn = sym.fqdn or f"{base_mod}.{raw_name}"
@@ -56,6 +64,7 @@ def flatten_symbols(
                 rel_path,
                 full_path,
                 prefix=f"{raw_name}.",
+                seen_ids=seen_ids,
             )
             nodes.extend(child_nodes)
     return nodes
@@ -195,7 +204,7 @@ def order_symbols_by_levels(
     base_types_and_vars = [
         n
         for n in nodes
-        if get_kind_prefix(n.symbol.kind) in ("const", "type", "var")
+        if get_kind_prefix(n.symbol.kind) != "fn"
     ]
     for n in base_types_and_vars:
         n.dag_level = 0

@@ -658,10 +658,10 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     )
     print("=" * 64)
 
-    # 1. docgen
+    # 1. docgen (Steps 1-2/4)
     if not args.skip_docgen:
         print(
-            "\n>>> [Step 1/3] docgen: "
+            "\n>>> [Steps 1-2/4] docgen: "
             "Parsing source code and generating symbol docs..."
         )
         ret_docgen = run_docgen(
@@ -681,10 +681,10 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         if ret_docgen != 0:
             sys.exit(ret_docgen)
 
-    # 2. designgen
+    # 2. designgen (Step 3/4)
     if not args.skip_designgen:
         print(
-            "\n>>> [Step 2/3] designgen: "
+            "\n>>> [Step 3/4] designgen: "
             "Synthesizing architecture and data models..."
         )
         ret_design = run_design_generation(
@@ -702,9 +702,9 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         if ret_design != 0:
             sys.exit(ret_design)
 
-    # 3. reportgen
+    # 3. reportgen (Step 4/4)
     print(
-        "\n>>> [Step 3/3] reportgen: "
+        "\n>>> [Step 4/4] reportgen: "
         "Generating project overview README (.docgen/README.md)..."
     )
 

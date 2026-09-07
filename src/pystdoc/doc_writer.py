@@ -264,6 +264,7 @@ def write_single_symbol_doc(
     symbol: Symbol,
     prefix_name: str = "",
     language: str = "English",
+    symbol_id_override: Optional[str] = None,
 ) -> Path:
     """Write an individual symbol document with immediate flush."""
     norm_lang = normalize_language(language)
@@ -271,7 +272,11 @@ def write_single_symbol_doc(
     docgen_dir.mkdir(parents=True, exist_ok=True)
 
     k_prefix = get_kind_prefix(symbol.kind)
-    sym_id = f"{prefix_name}{symbol.name}" if prefix_name else symbol.name
+    sym_id = (
+        symbol_id_override
+        if symbol_id_override
+        else (f"{prefix_name}{symbol.name}" if prefix_name else symbol.name)
+    )
     out_file = docgen_dir / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.md"
 
     full_path = target_dir / rel_path

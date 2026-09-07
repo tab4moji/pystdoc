@@ -29,7 +29,7 @@ def generate_readme_doc(
     if is_tty is None:
         is_tty = is_terminal(sys.stdout)
     tracker = PhaseProgressTracker(
-        phase_label="Step 3/3: reportgen",
+        phase_label="Step 4/4 reportgen",
         total=1,
         is_tty=is_tty,
     )
