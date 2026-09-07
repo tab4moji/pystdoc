@@ -590,13 +590,10 @@ def run_docgen(
                 sym.top_down_context = cached_data.get(
                     "top_down_context", sym.top_down_context
                 )
-                with print_lock:
-                    done_msg = tracker.advance(
-                        1,
-                        extra=f"[Cached]: {node.unique_id} "
-                        f"(Lvl {node.dag_level})",
-                    )
-                    print(f"  {done_msg}", flush=True)
+                tracker.advance(
+                    1,
+                    extra=f"[Cached] {node.unique_id}",
+                )
             elif is_static_bypass:
                 old_cache = (
                     db.load_symbol_cache(cache_key)
@@ -626,13 +623,10 @@ def run_docgen(
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
-                with print_lock:
-                    done_msg = tracker.advance(
-                        1,
-                        extra=f"[Static Spec]: {node.unique_id} "
-                        f"(Lvl {node.dag_level})",
-                    )
-                    print(f"  {done_msg}", flush=True)
+                tracker.advance(
+                    1,
+                    extra=f"[Static Spec] {node.unique_id}",
+                )
             elif llm_client:
                 old_cache = (
                     db.load_symbol_cache(cache_key)
@@ -646,12 +640,9 @@ def run_docgen(
                     if node.direct_callee_ids
                     else ""
                 )
-                with print_lock:
-                    req_msg = tracker.render_current(
-                        extra=f"[LLM Requesting...]: {node.unique_id} "
-                        f"(Lvl {node.dag_level}){dep_info}",
-                    )
-                    print(f"  {req_msg}", flush=True)
+                tracker.render_current(
+                    extra=f"Requesting: {node.unique_id}{dep_info}",
+                )
 
                 param_strs = [
                     f"{p.name} ({p.type_hint})" if p.type_hint else p.name
@@ -710,20 +701,16 @@ def run_docgen(
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
-                with print_lock:
-                    done_msg = tracker.advance(
-                        1,
-                        extra=node.unique_id,
-                        elapsed=sym_elapsed,
-                    )
-                    print(f"       -> {done_msg}", flush=True)
+                tracker.advance(
+                    1,
+                    extra=node.unique_id,
+                    elapsed=sym_elapsed,
+                )
             else:
-                with print_lock:
-                    done_msg = tracker.advance(
-                        1,
-                        extra=f"[Static Info]: {node.unique_id}",
-                    )
-                    print(f"  {done_msg}", flush=True)
+                tracker.advance(
+                    1,
+                    extra=f"[Static Info] {node.unique_id}",
+                )
 
             write_single_symbol_doc(
                 target_dir,
@@ -734,7 +721,6 @@ def run_docgen(
             )
 
         # Process Level by Level
-
         for lvl_idx, lvl_nodes in enumerate(level_groups):
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=concurrency
@@ -750,6 +736,8 @@ def run_docgen(
                         print(f"\nError: {e}", file=sys.stderr, flush=True)
                         db.close()
                         return 1
+
+        tracker.finish()
 
         # 4. Pass 2: Top-down variable & field refinement
         id_to_node_map = {n.unique_id: n for n in all_symbol_nodes}
@@ -915,11 +903,10 @@ def run_docgen(
                 ctx_desc = " | ".join(ctx_names)
 
                 with print_lock:
-                    req_msg = var_tracker.render_current(
+                    var_tracker.render_current(
                         extra=f"[Top-down Context Updating...]: "
                         f"{v_node.unique_id} ({ctx_desc})",
                     )
-                    print(f"  {req_msg}", flush=True)
 
                 v_snippet = get_code_snippet(
                     v_full, v_sym.line_start, v_sym.line_end
@@ -967,12 +954,11 @@ def run_docgen(
                 db.save_symbol_cache(v_node.unique_id, save_payload)
 
                 with print_lock:
-                    done_var_msg = var_tracker.advance(
+                    var_tracker.advance(
                         1,
                         extra=v_node.unique_id,
                         elapsed=var_elapsed,
                     )
-                    print(f"       -> {done_var_msg}", flush=True)
 
                 prefix_in_unique_id = ""
                 if "::" in v_node.unique_id:
@@ -989,12 +975,11 @@ def run_docgen(
                 )
             else:
                 with print_lock:
-                    done_var_msg = var_tracker.advance(
+                    var_tracker.advance(
                         1,
                         extra=f"[Retained Variable Context]: "
                         f"{v_node.unique_id}",
                     )
-                    print(f"  {done_var_msg}", flush=True)
 
         if var_nodes:
             with concurrent.futures.ThreadPoolExecutor(
@@ -1010,6 +995,8 @@ def run_docgen(
                         print(f"\nError: {e}", file=sys.stderr, flush=True)
                         db.close()
                         return 1
+
+        var_tracker.finish()
 
         # 5. Flush all documentation with caller usage purposes
         id_to_node_map = {n.unique_id: n for n in all_symbol_nodes}

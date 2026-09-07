@@ -1,5 +1,6 @@
 """Progress bar and tracker utilities for pystdoc pipeline."""
 
+import shutil
 import sys
 import threading
 from typing import Optional
@@ -38,7 +39,6 @@ def format_progress_line(
 ) -> str:
     """Format a single progress line with step, bar, and ratio."""
     if is_tty is None:
-
         is_tty = is_terminal(sys.stdout)
 
     pct = (current / total * 100.0) if total > 0 else 100.0
@@ -47,15 +47,24 @@ def format_progress_line(
 
     if is_tty:
         bar_str = f" {render_pip_bar(current, total, width=width)}"
+        prefix = f"[{phase_label}]{bar_str} {ratio_str}{elapsed_str}"
+        cols = shutil.get_terminal_size((80, 24)).columns
+        max_extra = max(10, cols - len(prefix) - 4)
+        if extra:
+            if len(extra) > max_extra:
+                trimmed = extra[: max_extra - 3] + "..."
+            else:
+                trimmed = extra
+            return f"{prefix}: {trimmed}"
+        return prefix
     else:
         bar_str = ""
-
-    detail_str = f": {extra}" if extra else ""
-    return f"[{phase_label}]{bar_str} {ratio_str}{elapsed_str}{detail_str}"
+        detail_str = f": {extra}" if extra else ""
+        return f"[{phase_label}]{bar_str} {ratio_str}{elapsed_str}{detail_str}"
 
 
 class PhaseProgressTracker:
-    """Thread-safe progress tracker for unified pipeline phases."""
+    """Thread-safe pip-style in-place progress tracker."""
 
     def __init__(
         self,
@@ -63,13 +72,31 @@ class PhaseProgressTracker:
         total: int,
         is_tty: Optional[bool] = None,
         width: int = 24,
+        stream=None,
     ):
         self.phase_label = phase_label
         self.total = max(0, total)
         self.current = 0
-        self.is_tty = is_terminal(sys.stdout) if is_tty is None else is_tty
+        self.stream = stream if stream is not None else sys.stdout
+        self.is_tty = is_terminal(self.stream) if is_tty is None else is_tty
         self.width = width
         self.lock = threading.Lock()
+        self._finished = False
+
+    def _render(
+        self,
+        extra: str = "",
+        elapsed: Optional[float] = None,
+    ) -> str:
+        return format_progress_line(
+            phase_label=self.phase_label,
+            current=self.current,
+            total=self.total,
+            extra=extra,
+            elapsed=elapsed,
+            is_tty=self.is_tty,
+            width=self.width,
+        )
 
     def advance(
         self,
@@ -77,18 +104,16 @@ class PhaseProgressTracker:
         extra: str = "",
         elapsed: Optional[float] = None,
     ) -> str:
-        """Advance progress and return the formatted progress line."""
+        """Advance progress and update in-place progress line on TTY."""
         with self.lock:
             self.current = min(self.total, self.current + step)
-            line = format_progress_line(
-                phase_label=self.phase_label,
-                current=self.current,
-                total=self.total,
-                extra=extra,
-                elapsed=elapsed,
-                is_tty=self.is_tty,
-                width=self.width,
-            )
+            line = self._render(extra=extra, elapsed=elapsed)
+            if self.is_tty:
+                self.stream.write(f"\r{line}\033[K")
+                self.stream.flush()
+            else:
+                self.stream.write(f"{line}\n")
+                self.stream.flush()
         return line
 
     def render_current(
@@ -96,14 +121,28 @@ class PhaseProgressTracker:
         extra: str = "",
         elapsed: Optional[float] = None,
     ) -> str:
-        """Render current progress state without incrementing."""
+        """Render current progress state in-place without incrementing."""
         with self.lock:
-            return format_progress_line(
-                phase_label=self.phase_label,
-                current=self.current,
-                total=self.total,
-                extra=extra,
-                elapsed=elapsed,
-                is_tty=self.is_tty,
-                width=self.width,
-            )
+            line = self._render(extra=extra, elapsed=elapsed)
+            if self.is_tty:
+                self.stream.write(f"\r{line}\033[K")
+                self.stream.flush()
+            else:
+                self.stream.write(f"{line}\n")
+                self.stream.flush()
+        return line
+
+    def finish(
+        self,
+        extra: str = "",
+        elapsed: Optional[float] = None,
+    ) -> None:
+        """Finalize progress bar and write a newline on TTY."""
+        with self.lock:
+            if self._finished:
+                return
+            self._finished = True
+            if self.is_tty:
+                line = self._render(extra=extra, elapsed=elapsed)
+                self.stream.write(f"\r{line}\033[K\n")
+                self.stream.flush()

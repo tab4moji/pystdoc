@@ -293,8 +293,7 @@ def generate_data_models_doc(
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             if tracker:
-                c_msg = tracker.advance(1, extra="[Cached]: data_models.md")
-                print(f"  {c_msg}", flush=True)
+                tracker.advance(1, extra="[Cached]: data_models.md")
             else:
                 print("  [Cached]: .docgen/design/data_models.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
@@ -377,12 +376,11 @@ Structure the Markdown as follows:
 
     elapsed = time.time() - start_t
     if tracker:
-        done_msg = tracker.advance(
+        tracker.advance(
             1,
             extra=".docgen/design/data_models.md",
             elapsed=elapsed,
         )
-        print(f"       -> {done_msg}", flush=True)
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
@@ -427,10 +425,9 @@ def generate_execution_model_doc(
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             if tracker:
-                c_msg = tracker.advance(
+                tracker.advance(
                     1, extra="[Cached]: execution_model.md"
                 )
-                print(f"  {c_msg}", flush=True)
             else:
                 print("  [Cached]: .docgen/design/execution_model.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
@@ -514,12 +511,11 @@ Structure the Markdown as follows:
 
     elapsed = time.time() - start_t
     if tracker:
-        done_msg = tracker.advance(
+        tracker.advance(
             1,
             extra=".docgen/design/execution_model.md",
             elapsed=elapsed,
         )
-        print(f"       -> {done_msg}", flush=True)
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
@@ -568,10 +564,9 @@ def generate_module_docs(
             cached_content = db.load_design_cache(cache_key, input_hash)
             if cached_content:
                 if tracker:
-                    c_msg = tracker.advance(
+                    tracker.advance(
                         1, extra=f"[Cached]: modules/{mod_name}.md"
                     )
-                    print(f"    {c_msg}", flush=True)
                 else:
                     print(
                         f"    [Cached]: .docgen/design/modules/{mod_name}.md"
@@ -647,12 +642,11 @@ Structure the Markdown as follows:
 
         elapsed = time.time() - start_t
         if tracker:
-            done_msg = tracker.advance(
+            tracker.advance(
                 1,
                 extra=f".docgen/design/modules/{mod_name}.md",
                 elapsed=elapsed,
             )
-            print(f"         -> {done_msg}", flush=True)
         else:
             print(
                 f"         -> [Done in {elapsed:5.1f}s]: "
@@ -704,8 +698,7 @@ def generate_overview_doc(
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
             if tracker:
-                c_msg = tracker.advance(1, extra="[Cached]: overview.md")
-                print(f"  {c_msg}", flush=True)
+                tracker.advance(1, extra="[Cached]: overview.md")
             else:
                 print("  [Cached]: .docgen/design/overview.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
@@ -787,12 +780,11 @@ Requirements:
 
     elapsed = time.time() - start_t
     if tracker:
-        done_msg = tracker.advance(
+        tracker.advance(
             1,
             extra=".docgen/design/overview.md",
             elapsed=elapsed,
         )
-        print(f"       -> {done_msg}", flush=True)
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
@@ -992,6 +984,7 @@ def run_design_generation(
         tracker=tracker,
     )
 
+    tracker.finish()
     db.close()
     print("=== designgen Finished: Successfully built documentation ===")
     return 0

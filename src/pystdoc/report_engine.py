@@ -124,8 +124,8 @@ def generate_readme_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            c_msg = tracker.advance(1, extra="[Cached]: .docgen/README.md")
-            print(f"  {c_msg}", flush=True)
+            tracker.advance(1, extra="[Cached]: .docgen/README.md")
+            tracker.finish()
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
@@ -296,8 +296,8 @@ topological dependency mapping.
         content = default_readme
 
     elapsed = time.time() - start_t
-    done_msg = tracker.advance(1, extra=".docgen/README.md", elapsed=elapsed)
-    print(f"       -> {done_msg}", flush=True)
+    tracker.advance(1, extra=".docgen/README.md", elapsed=elapsed)
+    tracker.finish()
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
