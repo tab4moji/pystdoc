@@ -21,6 +21,7 @@ from pystdoc.call_graph import (
 from pystdoc.parser_clang import _ensure_libclang_loaded
 from pystdoc.parser_python import parse_python_file
 from pystdoc.llm_client import LLMError
+from pystdoc.progress import PhaseProgressTracker
 
 
 class TestFinal100(unittest.TestCase):
@@ -551,15 +552,20 @@ class TestFinal100(unittest.TestCase):
         )
         self.assertEqual(ret_flag, 0)
 
-        # 7. Worker exception during Pass 2 var refinement (lines 637-640)
-        orig_print = print
+        # 7. Worker exception during Pass 2 var refinement
+        orig_advance = PhaseProgressTracker.advance
 
-        def crash_print(*args, **kwargs):
-            if args and "[Retained Variable Context]" in str(args[0]):
+        def crash_advance(tracker_self, *args, **kwargs):
+            if "Retained Variable Context" in kwargs.get("extra", ""):
                 raise RuntimeError("Pass 2 thread worker crash")
-            return orig_print(*args, **kwargs)
+            return orig_advance(tracker_self, *args, **kwargs)
 
-        with patch("builtins.print", side_effect=crash_print):
+        with patch.object(
+            PhaseProgressTracker,
+            "advance",
+            side_effect=crash_advance,
+            autospec=True,
+        ):
             ret_var_crash = run_docgen(
                 self.test_dir,
                 use_llm=False,

@@ -1,5 +1,6 @@
 """Tests for progress bar and tracker utilities."""
 
+import io
 import threading
 from pathlib import Path
 from pystdoc.db import DocgenDB
@@ -69,6 +70,30 @@ def test_format_progress_line():
     assert "[Done in   1.2s]" in line_tty
     assert ": src/main.py" in line_tty
 
+    # TTY with empty extra
+    line_tty_empty = format_progress_line(
+        phase_label="Step 1/3: docgen",
+        current=5,
+        total=10,
+        extra="",
+        is_tty=True,
+        width=10,
+    )
+    assert "[Step 1/3: docgen]" in line_tty_empty
+    assert line_tty_empty.endswith("5/10 ( 50.0%)")
+
+    # TTY with long extra (testing truncation)
+    long_extra = "a" * 200
+    line_tty_long = format_progress_line(
+        phase_label="Step 1/3: docgen",
+        current=5,
+        total=10,
+        extra=long_extra,
+        is_tty=True,
+        width=10,
+    )
+    assert "..." in line_tty_long
+
     line_nontty = format_progress_line(
         phase_label="Step 1/3: docgen",
         current=10,
@@ -92,11 +117,13 @@ def test_format_progress_line():
 
 
 def test_phase_progress_tracker():
+    stream = io.StringIO()
     tracker = PhaseProgressTracker(
         phase_label="Step 1/3: docgen",
         total=5,
         is_tty=True,
         width=10,
+        stream=stream,
     )
     assert tracker.total == 5
     assert tracker.current == 0
@@ -104,6 +131,7 @@ def test_phase_progress_tracker():
     l1 = tracker.advance(1, extra="sym1", elapsed=0.5)
     assert "1/5 ( 20.0%)" in l1
     assert "sym1" in l1
+    assert "\r" in stream.getvalue()
 
     cur = tracker.render_current(extra="sym1_current")
     assert "1/5 ( 20.0%)" in cur
@@ -111,6 +139,11 @@ def test_phase_progress_tracker():
 
     tracker.advance(10, extra="done")
     assert tracker.current == 5
+
+    tracker.finish(extra="done")
+    assert "\n" in stream.getvalue()
+    # Double finish should be safe no-op
+    tracker.finish()
 
     tracker2 = PhaseProgressTracker(
         "Step 2/3: designgen", total=100, is_tty=False
@@ -125,6 +158,7 @@ def test_phase_progress_tracker():
     for t in threads:
         t.join()
     assert tracker2.current == 100
+    tracker2.finish()
 
 
 def test_design_engine_cached_without_tracker(tmp_path: Path):

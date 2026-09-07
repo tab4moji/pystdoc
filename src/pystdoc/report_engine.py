@@ -130,6 +130,7 @@ def generate_readme_doc(
             return cached_content
 
     start_t = time.time()
+    tracker.render_current(extra=".docgen/README.md")
 
     sys_msg = (
         "You are an objective senior code analyst and technical writer. "

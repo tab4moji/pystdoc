@@ -300,6 +300,8 @@ def generate_data_models_doc(
             return cached_content
 
     start_t = time.time()
+    if tracker:
+        tracker.render_current(extra="data_models.md")
 
     reduced_types_summary = hierarchical_reduce_summaries(
         types_raw,
@@ -434,6 +436,8 @@ def generate_execution_model_doc(
             return cached_content
 
     start_t = time.time()
+    if tracker:
+        tracker.render_current(extra="execution_model.md")
 
     reduced_funcs_summary = hierarchical_reduce_summaries(
         funcs_raw,
@@ -576,6 +580,8 @@ def generate_module_docs(
                 continue
 
         start_t = time.time()
+        if tracker:
+            tracker.render_current(extra=f"modules/{mod_name}.md")
         reduced_module_elements = hierarchical_reduce_summaries(
             doc_lines,
             f"Module `{mod_name}` Elements",
@@ -705,6 +711,8 @@ def generate_overview_doc(
             return cached_content
 
     start_t = time.time()
+    if tracker:
+        tracker.render_current(extra="overview.md")
     reduced_modules_overview = hierarchical_reduce_summaries(
         mod_lines,
         "All Modules Overview",
@@ -914,11 +922,7 @@ def run_design_generation(
         is_tty=is_tty,
     )
 
-    # Step 1
-    print(
-        "[2/5] Step 1/4: Synthesizing core data models "
-        "-> .docgen/design/data_models.md"
-    )
+    # Step 1: Synthesize core data models
     data_models_content = generate_data_models_doc(
         type_docs=type_docs,
         var_docs=var_docs,
@@ -931,11 +935,7 @@ def run_design_generation(
         tracker=tracker,
     )
 
-    # Step 2
-    print(
-        "[3/5] Step 2/4: Identifying system execution model "
-        "-> .docgen/design/execution_model.md"
-    )
+    # Step 2: Identify system execution model
     execution_model_content = generate_execution_model_doc(
         fn_docs=fn_docs,
         llm_client=llm_client,
@@ -948,12 +948,7 @@ def run_design_generation(
         tracker=tracker,
     )
 
-    # Step 3
-    print(
-        f"[4/5] Step 3/4: Deriving module relationships and interfaces "
-        f"(Total {total_mods} modules)..."
-    )
-
+    # Step 3: Derive module relationships and interfaces
     module_summaries = generate_module_docs(
         modules=modules,
         llm_client=llm_client,
@@ -965,11 +960,7 @@ def run_design_generation(
         tracker=tracker,
     )
 
-    # Step 4
-    print(
-        "[5/5] Step 4/4: Synthesizing architecture overview & diagrams "
-        "-> .docgen/design/overview.md"
-    )
+    # Step 4: Synthesize architecture overview & diagrams
     generate_overview_doc(
         data_models_content=data_models_content,
         execution_model_content=execution_model_content,
