@@ -322,6 +322,20 @@ class TestMCPServer(unittest.TestCase):
             m_design.assert_called_once()
             m_readme.assert_called_once()
 
+        # Fast sync test
+        with patch(
+            "pystdoc.mcp_server.run_docgen", return_value=0
+        ) as m_docgen, patch(
+            "pystdoc.mcp_server.run_design_generation"
+        ) as m_design, patch(
+            "pystdoc.mcp_server.generate_readme_doc"
+        ) as m_readme:
+            res_fast = tool_fn(path=str(self.test_dir), fast=True)
+            self.assertIn("fast bottom-up mode", res_fast)
+            m_docgen.assert_called_once()
+            m_design.assert_not_called()
+            m_readme.assert_not_called()
+
     def test_mcp_sync_failures(self):
         server = create_mcp_server()
         tool_fn = None

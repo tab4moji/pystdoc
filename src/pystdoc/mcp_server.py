@@ -177,7 +177,7 @@ def create_mcp_server(
 
     server_instructions = (
         "pystdoc: Structural & Architecture Documentation MCP Server.\n"
-        "Guidelines for LLM assistant:\n"
+        "Guidelines for LLM assistant (e.g. OpenCode):\n"
         "1. To understand or explain the system/project, call "
         "`pystdoc_get_overview` or `pystdoc_get_design(section='readme')`.\n"
         "2. When asked where to modify code, how to implement/delete a "
@@ -193,8 +193,12 @@ def create_mcp_server(
         "`pystdoc_search_symbols` or `pystdoc_list_symbols`.\n"
         "6. To inspect signature and doc for a specific symbol, call "
         "`pystdoc_get_symbol`.\n"
-        "7. If documentation is missing or outdated, call `pystdoc_sync` "
-        "to generate full docs."
+        "7. When code changes or new symbols are added during coding, call "
+        "`pystdoc_sync(fast=True)` (highly recommended for OpenCode to "
+        "rapidly refresh bottom-up symbol metadata and call graphs without "
+        "heavy report overhead).\n"
+        "8. If documentation is completely missing or full architecture "
+        "reports/README need recreation, call `pystdoc_sync(fast=False)`."
     )
 
     mcp = FastMCP(
@@ -532,12 +536,15 @@ def create_mcp_server(
     @mcp.tool(
         name="pystdoc_sync",
         description=(
-            "Generate or update full documentation suite (.docgen/) for a "
-            "codebase using configured LLM, returning project summary."
+            "Generate or update documentation suite (.docgen/) for a "
+            "codebase. Set fast=True for fast bottom-up symbol sync "
+            "(skips top-down design/report synthesis; recommended "
+            "for OpenCode during coding to rapidly refresh indexes)."
         ),
     )
     def sync_codebase(
         path: str = "./",
+        fast: bool = False,
         no_llm: Optional[bool] = None,
         language: Optional[str] = None,
     ) -> str:
@@ -556,7 +563,7 @@ def create_mcp_server(
         fallback = cfg.get("allow_fallback", False)
 
         try:
-            # 1. docgen
+            # 1. docgen (Pass 1 & Pass 2 bottom-up symbol indexing)
             res1 = run_docgen(
                 target_dir=target_dir,
                 use_llm=use_llm,
@@ -570,6 +577,13 @@ def create_mcp_server(
             )
             if res1 != 0:
                 return f"Error: docgen failed with exit code {res1}."
+
+            if fast:
+                return (
+                    "Successfully synchronized symbol documentation (fast "
+                    f"bottom-up mode) in {target_dir / '.docgen'}. All "
+                    "symbols, call graphs, and metadata are up to date."
+                )
 
             # 2. designgen
             res2 = run_design_generation(

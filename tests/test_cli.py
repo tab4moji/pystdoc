@@ -439,6 +439,40 @@ class TestCLI(unittest.TestCase):
             reportgen_main(["impact", "--dir", str(self.test_dir)])
         self.assertEqual(cm.exception.code, 1)
 
+    def test_reportgen_cli_fast_pipeline(self):
+        test_args = [
+            "pystdoc",
+            "sync",
+            "--fast",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+            "--language", "English",
+        ]
+        with patch("sys.argv", test_args):
+            with self.assertRaises(SystemExit) as cm:
+                reportgen_main()
+            self.assertEqual(cm.exception.code, 0)
+        # In fast mode, documents/ is created, but README.md is not generated
+        self.assertTrue((self.test_dir / ".docgen" / "documents").exists())
+        self.assertFalse((self.test_dir / ".docgen" / "README.md").exists())
+
+    def test_watch_cli_fast(self):
+        with patch("pystdoc.watcher.DNotifyWatcher.start") as mock_start:
+            test_args = [
+                "pystdoc",
+                "watch",
+                "--fast",
+                "--dir", str(self.test_dir),
+                "--no-llm",
+                "--allow-fallback",
+            ]
+            with patch("sys.argv", test_args):
+                with self.assertRaises(SystemExit) as cm:
+                    reportgen_main()
+                self.assertEqual(cm.exception.code, 0)
+                mock_start.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

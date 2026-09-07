@@ -285,6 +285,7 @@ def run_watch(
     allow_fallback: bool = False,
     compile_commands: Optional[str] = None,
     interval: float = 1.0,
+    fast: bool = False,
 ) -> int:
     """Run continuous watcher with auto-sync on code change."""
     from pystdoc.watcher import DNotifyWatcher
@@ -303,7 +304,7 @@ def run_watch(
             compile_commands_path=compile_commands,
             concurrency=concurrency,
         )
-        if ret_docgen != 0:
+        if ret_docgen != 0 or fast:
             return
 
         ret_design = run_design_generation(
@@ -342,8 +343,10 @@ def run_watch(
             db=db,
         )
 
+    mode_label = " (Fast bottom-up mode)" if fast else ""
     print(
-        "\n>>> Performing initial sync before starting watcher...",
+        f"\n>>> Performing initial sync{mode_label} "
+        "before starting watcher...",
         flush=True,
     )
     _sync_action()
@@ -590,6 +593,11 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Number of parallel LLM workers",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast bottom-up sync only (runs docgen, skips design/report)",
+    )
     parser.add_argument("--skip-docgen", action="store_true",
                         help="Skip docgen step")
     parser.add_argument(
@@ -646,22 +654,30 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                 allow_fallback=allow_fallback,
                 compile_commands=args.compile_commands,
                 interval=args.interval,
+                fast=args.fast,
             )
         )
 
     is_tty = is_terminal(sys.stdout)
+    pipeline_mode_label = " (Fast bottom-up)" if args.fast else ""
 
     print("=" * 64)
-    print(
-        f"=== pystdoc Unified Pipeline v{pystdoc.__version__} "
-        f"(Lang: {lang}): {target_dir} ==="
+    hdr = (
+        f"=== pystdoc Unified Pipeline v{pystdoc.__version__}"
+        f"{pipeline_mode_label} (Lang: {lang}): {target_dir} ==="
     )
+    print(hdr)
     print("=" * 64)
 
-    # 1. docgen (Steps 1-2/4)
+    # 1. docgen (Steps 1-2/4 or Steps 1-2/2)
     if not args.skip_docgen:
+        step_label = (
+            "[Steps 1-2/2] docgen (Fast bottom-up mode)"
+            if args.fast
+            else "[Steps 1-2/4] docgen"
+        )
         print(
-            "\n>>> [Steps 1-2/4] docgen: "
+            f"\n>>> {step_label}: "
             "Parsing source code and generating symbol docs..."
         )
         ret_docgen = run_docgen(
@@ -680,6 +696,12 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         )
         if ret_docgen != 0:
             sys.exit(ret_docgen)
+
+    if args.fast:
+        print("=" * 64)
+        print(f"=== pystdoc Fast Sync Finished: {target_dir / '.docgen'} ===")
+        print("=" * 64)
+        sys.exit(0)
 
     # 2. designgen (Step 3/4)
     if not args.skip_designgen:

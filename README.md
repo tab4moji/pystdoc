@@ -78,12 +78,15 @@ pip install pystdoc
 
 ### Basic Usage
 
-#### 1. Generate & Sync Full Documentation Suite (`sync` / Default)
+#### 1. Generate & Sync Documentation Suite (`sync` / Default)
 ```bash
-# Generate complete documentation (symbol docs, design docs, README overview)
+# Full sync: complete 4-step pipeline (symbol docs, design docs, README overview)
 pystdoc --dir ./my_project/
 
-# Or explicitly with sync subcommand
+# Fast sync: bottom-up symbol analysis & indexing only (skips top-down design/report synthesis)
+pystdoc sync --fast --dir ./my_project/
+
+# Explicitly with sync subcommand and options
 pystdoc sync --dir ./my_project/ --language 日本語
 ```
 
@@ -231,7 +234,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 - `pystdoc_list_symbols(kind, path)`: List indexed symbols (`function`, `variable`, `type`, or `all`) with definition line ranges (`file:from:to`).
 - `pystdoc_get_design(section, path)`: Retrieve architecture design docs (`readme`, `overview`, `data_models`, `execution_model`, or module names like `MainViewModel`).
 - `pystdoc_list_files(path)`: List all indexed source code files.
-- `pystdoc_sync(path, no_llm, language)`: Generate or update full `.docgen/` suite and return the executive summary immediately.
+- `pystdoc_sync(path, fast, no_llm, language)`: Generate or update documentation suite. **Recommended for OpenCode**: Use `fast=True` during active coding to rapidly refresh symbol and call-graph indexes without top-down synthesis overhead.
 
 ---
 
@@ -240,6 +243,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | Option | Alias / Env | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--dir` | | `./` | Target project directory path |
+| `--fast` | | `false` | Fast bottom-up sync only (runs docgen symbol indexing, skips designgen and reportgen) |
 | `--language` | `-l` | `English` | Output documentation language (`English`, `Japanese`, `日本語`) |
 | `--host` | `-H`, `--base-url` | `http://127.0.0.1:11434` | LLM server host endpoint URL |
 | `--model` | `-m`, `LLM_MODEL` | `gemma4-26b-a4b` | LLM model identifier |
