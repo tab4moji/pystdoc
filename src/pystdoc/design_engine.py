@@ -12,6 +12,7 @@ from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.progress import PhaseProgressTracker, is_terminal
 from pystdoc.ui_detector import (
     annotate_documents_with_ui_context,
     detect_ui_type,
@@ -19,6 +20,7 @@ from pystdoc.ui_detector import (
 
 
 def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
+
     """Parse key sections from an individual symbol or file markdown doc."""
     text = md_path.read_text(encoding="utf-8", errors="replace")
     data = {
@@ -267,6 +269,7 @@ def generate_data_models_doc(
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
+    tracker: Optional[PhaseProgressTracker] = None,
 ) -> str:
     """Step 1: Generate data_models.md with SQLite cache & Map-Reduce."""
     norm_lang = normalize_language(language)
@@ -289,11 +292,16 @@ def generate_data_models_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            print("  [Cached]: .docgen/design/data_models.md")
+            if tracker:
+                c_msg = tracker.advance(1, extra="[Cached]: data_models.md")
+                print(f"  {c_msg}", flush=True)
+            else:
+                print("  [Cached]: .docgen/design/data_models.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
     start_t = time.time()
+
     reduced_types_summary = hierarchical_reduce_summaries(
         types_raw,
         "Type Definitions",
@@ -368,9 +376,18 @@ Structure the Markdown as follows:
         content = default_data_models
 
     elapsed = time.time() - start_t
-    print(
-        f"       -> [Done in {elapsed:5.1f}s]: .docgen/design/data_models.md"
-    )
+    if tracker:
+        done_msg = tracker.advance(
+            1,
+            extra=".docgen/design/data_models.md",
+            elapsed=elapsed,
+        )
+        print(f"       -> {done_msg}", flush=True)
+    else:
+        print(
+            f"       -> [Done in {elapsed:5.1f}s]: "
+            ".docgen/design/data_models.md"
+        )
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
@@ -387,6 +404,7 @@ def generate_execution_model_doc(
     force: bool = False,
     allow_fallback: bool = False,
     ui_info: Optional[Dict[str, Any]] = None,
+    tracker: Optional[PhaseProgressTracker] = None,
 ) -> str:
     """Step 2: Generate execution_model.md with SQLite cache & Map-Reduce."""
     norm_lang = normalize_language(language)
@@ -408,11 +426,18 @@ def generate_execution_model_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            print("  [Cached]: .docgen/design/execution_model.md")
+            if tracker:
+                c_msg = tracker.advance(
+                    1, extra="[Cached]: execution_model.md"
+                )
+                print(f"  {c_msg}", flush=True)
+            else:
+                print("  [Cached]: .docgen/design/execution_model.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
     start_t = time.time()
+
     reduced_funcs_summary = hierarchical_reduce_summaries(
         funcs_raw,
         "Function Call Structures",
@@ -488,10 +513,18 @@ Structure the Markdown as follows:
         content = default_exec_model
 
     elapsed = time.time() - start_t
-    print(
-        f"       -> [Done in {elapsed:5.1f}s]: "
-        ".docgen/design/execution_model.md"
-    )
+    if tracker:
+        done_msg = tracker.advance(
+            1,
+            extra=".docgen/design/execution_model.md",
+            elapsed=elapsed,
+        )
+        print(f"       -> {done_msg}", flush=True)
+    else:
+        print(
+            f"       -> [Done in {elapsed:5.1f}s]: "
+            ".docgen/design/execution_model.md"
+        )
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
@@ -507,6 +540,7 @@ def generate_module_docs(
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
+    tracker: Optional[PhaseProgressTracker] = None,
 ) -> Dict[str, str]:
     """Step 3: Generate module docs with SQLite caching per module."""
     norm_lang = normalize_language(language)
@@ -533,7 +567,15 @@ def generate_module_docs(
         if db and not force and out_file.exists():
             cached_content = db.load_design_cache(cache_key, input_hash)
             if cached_content:
-                print(f"    [Cached]: .docgen/design/modules/{mod_name}.md")
+                if tracker:
+                    c_msg = tracker.advance(
+                        1, extra=f"[Cached]: modules/{mod_name}.md"
+                    )
+                    print(f"    {c_msg}", flush=True)
+                else:
+                    print(
+                        f"    [Cached]: .docgen/design/modules/{mod_name}.md"
+                    )
                 write_flushed_text(out_file, cached_content.strip() + "\n")
                 module_summaries[mod_name] = cached_content
                 continue
@@ -604,10 +646,18 @@ Structure the Markdown as follows:
             content = default_mod_doc
 
         elapsed = time.time() - start_t
-        print(
-            f"         -> [Done in {elapsed:5.1f}s]: "
-            f".docgen/design/modules/{mod_name}.md"
-        )
+        if tracker:
+            done_msg = tracker.advance(
+                1,
+                extra=f".docgen/design/modules/{mod_name}.md",
+                elapsed=elapsed,
+            )
+            print(f"         -> {done_msg}", flush=True)
+        else:
+            print(
+                f"         -> [Done in {elapsed:5.1f}s]: "
+                f".docgen/design/modules/{mod_name}.md"
+            )
 
         write_flushed_text(out_file, content.strip() + "\n")
         if db:
@@ -628,6 +678,7 @@ def generate_overview_doc(
     force: bool = False,
     allow_fallback: bool = False,
     ui_info: Optional[Dict[str, Any]] = None,
+    tracker: Optional[PhaseProgressTracker] = None,
 ) -> str:
     """Step 4: Generate overview.md with SQLite cache & Mermaid synthesis."""
     norm_lang = normalize_language(language)
@@ -652,7 +703,11 @@ def generate_overview_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            print("  [Cached]: .docgen/design/overview.md")
+            if tracker:
+                c_msg = tracker.advance(1, extra="[Cached]: overview.md")
+                print(f"  {c_msg}", flush=True)
+            else:
+                print("  [Cached]: .docgen/design/overview.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
@@ -731,7 +786,18 @@ Requirements:
         content = default_overview
 
     elapsed = time.time() - start_t
-    print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/design/overview.md")
+    if tracker:
+        done_msg = tracker.advance(
+            1,
+            extra=".docgen/design/overview.md",
+            elapsed=elapsed,
+        )
+        print(f"       -> {done_msg}", flush=True)
+    else:
+        print(
+            f"       -> [Done in {elapsed:5.1f}s]: "
+            ".docgen/design/overview.md"
+        )
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
@@ -740,6 +806,7 @@ Requirements:
 
 
 def run_design_generation(
+
     target_dir: Path,
     use_llm: bool = True,
     host: Optional[str] = None,
@@ -751,10 +818,13 @@ def run_design_generation(
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
+    is_tty: Optional[bool] = None,
 ) -> int:
     """Main pipeline for synthesizing .docgen/design/ documents."""
     target_dir = target_dir.resolve()
     norm_lang = normalize_language(language)
+    if is_tty is None:
+        is_tty = is_terminal(sys.stdout)
     docs_dir = target_dir / ".docgen" / "documents"
 
     if not docs_dir.exists():
@@ -843,6 +913,15 @@ def run_design_generation(
         if ".fn." in d["file_name"] or d["kind"] in ("function", "method")
     ]
 
+    modules = group_docs_by_module(parsed_docs)
+    total_mods = len(modules)
+    total_design_steps = 1 + 1 + total_mods + 1
+    tracker = PhaseProgressTracker(
+        phase_label="Step 2/3: designgen",
+        total=total_design_steps,
+        is_tty=is_tty,
+    )
+
     # Step 1
     print(
         "[2/5] Step 1/4: Synthesizing core data models "
@@ -857,6 +936,7 @@ def run_design_generation(
         language=norm_lang,
         force=force,
         allow_fallback=allow_fallback,
+        tracker=tracker,
     )
 
     # Step 2
@@ -873,11 +953,10 @@ def run_design_generation(
         force=force,
         allow_fallback=allow_fallback,
         ui_info=ui_info,
+        tracker=tracker,
     )
 
     # Step 3
-    modules = group_docs_by_module(parsed_docs)
-    total_mods = len(modules)
     print(
         f"[4/5] Step 3/4: Deriving module relationships and interfaces "
         f"(Total {total_mods} modules)..."
@@ -891,6 +970,7 @@ def run_design_generation(
         language=norm_lang,
         force=force,
         allow_fallback=allow_fallback,
+        tracker=tracker,
     )
 
     # Step 4
@@ -909,6 +989,7 @@ def run_design_generation(
         force=force,
         allow_fallback=allow_fallback,
         ui_info=ui_info,
+        tracker=tracker,
     )
 
     db.close()

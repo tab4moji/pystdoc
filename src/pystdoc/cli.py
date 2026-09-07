@@ -11,6 +11,7 @@ from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
 from pystdoc.llm_client import LLMClient
+from pystdoc.progress import is_terminal
 from pystdoc.query import (
     run_description,
     run_functions,
@@ -24,6 +25,7 @@ from pystdoc.report_engine import generate_readme_doc
 
 
 def docgen_main(argv: Optional[List[str]] = None) -> None:
+
     """CLI entry point for `docgen` command."""
     parser = argparse.ArgumentParser(
         description="Source code symbol document generator (docgen)"
@@ -113,6 +115,7 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
         else cfg.get("allow_fallback", False)
     )
 
+    is_tty = is_terminal(sys.stdout)
     sys.exit(
         run_docgen(
             target_dir=target,
@@ -126,11 +129,13 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
             allow_fallback=allow_fallback,
             compile_commands_path=args.compile_commands,
             concurrency=concurrency,
+            is_tty=is_tty,
         )
     )
 
 
 def designgen_main(argv: Optional[List[str]] = None) -> None:
+
     """CLI entry point for `designgen` command."""
     parser = argparse.ArgumentParser(
         description="Architecture and system design generator (designgen)"
@@ -207,6 +212,7 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
         else cfg.get("allow_fallback", False)
     )
 
+    is_tty = is_terminal(sys.stdout)
     sys.exit(
         run_design_generation(
             target_dir=target,
@@ -218,11 +224,13 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
             language=lang,
             force=args.force,
             allow_fallback=allow_fallback,
+            is_tty=is_tty,
         )
     )
 
 
 def _parse_query_target_and_symbol(
+
     sub_args: List[str], prog_name: str, desc: str
 ) -> Tuple[Path, Optional[str]]:
     """Parse symbol name and target directory arguments for query."""
@@ -641,6 +649,8 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             )
         )
 
+    is_tty = is_terminal(sys.stdout)
+
     print("=" * 64)
     print(
         f"=== pystdoc Unified Pipeline v{pystdoc.__version__} "
@@ -666,6 +676,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             allow_fallback=allow_fallback,
             compile_commands_path=args.compile_commands,
             concurrency=concurrency,
+            is_tty=is_tty,
         )
         if ret_docgen != 0:
             sys.exit(ret_docgen)
@@ -686,6 +697,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
             language=lang,
             force=args.force,
             allow_fallback=allow_fallback,
+            is_tty=is_tty,
         )
         if ret_design != 0:
             sys.exit(ret_design)
@@ -723,9 +735,11 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         force=args.force,
         allow_fallback=allow_fallback,
         db=db,
+        is_tty=is_tty,
     )
 
     out_readme = target_dir / ".docgen" / "README.md"
+
     print("=" * 64)
     print(f"=== reportgen Finished: Created {out_readme} ===")
     print("=" * 64)

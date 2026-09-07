@@ -34,9 +34,14 @@ from pystdoc.call_graph import (
     order_symbols_by_levels,
     build_callee_context_summary,
 )
+from pystdoc.progress import (
+    PhaseProgressTracker,
+    is_terminal,
+)
 
 
 class FileLock:
+
     """Inter-process directory lock using flock."""
 
     def __init__(self, lock_file: Path):
@@ -360,10 +365,14 @@ def run_docgen(
     allow_fallback: bool = False,
     compile_commands_path: Optional[str] = None,
     concurrency: int = 1,
+    is_tty: Optional[bool] = None,
 ) -> int:
     target_dir = target_dir.resolve()
     norm_lang = normalize_language(language)
+    if is_tty is None:
+        is_tty = is_terminal(sys.stdout)
     if not target_dir.exists() or not target_dir.is_dir():
+
         print(
             f"Error: Specified directory does not exist: {target_dir}",
             file=sys.stderr,
@@ -518,8 +527,11 @@ def run_docgen(
         actually_updated_symbol_ids: Set[str] = set()
         dirty_lock = threading.Lock()
         print_lock = threading.Lock()
-        started_counter = [0]
-        completed_counter = [0]
+        tracker = PhaseProgressTracker(
+            phase_label="Step 1/3: docgen",
+            total=total_symbols_count,
+            is_tty=is_tty,
+        )
 
         print(
             f"[3/5] Pass 1: Level-by-Level analysis "
@@ -552,18 +564,6 @@ def run_docgen(
                     or db.load_symbol_cache(node.unique_id)
                 )
 
-            with print_lock:
-                started_counter[0] += 1
-                curr_idx = started_counter[0]
-                percent = (
-                    (curr_idx / total_symbols_count * 100.0)
-                    if total_symbols_count > 0
-                    else 100.0
-                )
-                progress_str = (
-                    f"[{curr_idx}/{total_symbols_count} ({percent:5.1f}%)]"
-                )
-
             # Check if this symbol should be statically resolved without LLM
             sym_kind_lower = sym.kind.lower()
             is_static_bypass = (
@@ -591,12 +591,12 @@ def run_docgen(
                     "top_down_context", sym.top_down_context
                 )
                 with print_lock:
-                    completed_counter[0] += 1
-                    print(
-                        f"  {progress_str} [Cached]: "
-                        f"{node.unique_id} (Lvl {node.dag_level})",
-                        flush=True,
+                    done_msg = tracker.advance(
+                        1,
+                        extra=f"[Cached]: {node.unique_id} "
+                        f"(Lvl {node.dag_level})",
                     )
+                    print(f"  {done_msg}", flush=True)
             elif is_static_bypass:
                 old_cache = (
                     db.load_symbol_cache(cache_key)
@@ -627,12 +627,12 @@ def run_docgen(
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
                 with print_lock:
-                    completed_counter[0] += 1
-                    print(
-                        f"  {progress_str} [Static Spec]: "
-                        f"{node.unique_id} (Lvl {node.dag_level})",
-                        flush=True,
+                    done_msg = tracker.advance(
+                        1,
+                        extra=f"[Static Spec]: {node.unique_id} "
+                        f"(Lvl {node.dag_level})",
                     )
+                    print(f"  {done_msg}", flush=True)
             elif llm_client:
                 old_cache = (
                     db.load_symbol_cache(cache_key)
@@ -647,11 +647,11 @@ def run_docgen(
                     else ""
                 )
                 with print_lock:
-                    print(
-                        f"  {progress_str} [LLM Requesting...]: "
-                        f"{node.unique_id} (Lvl {node.dag_level}){dep_info}",
-                        flush=True,
+                    req_msg = tracker.render_current(
+                        extra=f"[LLM Requesting...]: {node.unique_id} "
+                        f"(Lvl {node.dag_level}){dep_info}",
                     )
+                    print(f"  {req_msg}", flush=True)
 
                 param_strs = [
                     f"{p.name} ({p.type_hint})" if p.type_hint else p.name
@@ -711,26 +711,19 @@ def run_docgen(
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
                 with print_lock:
-                    completed_counter[0] += 1
-                    done_count = completed_counter[0]
-                    done_pct = (
-                        (done_count / total_symbols_count * 100.0)
-                        if total_symbols_count > 0
-                        else 100.0
+                    done_msg = tracker.advance(
+                        1,
+                        extra=node.unique_id,
+                        elapsed=sym_elapsed,
                     )
-                    done_msg = (
-                        f"       -> [Done in {sym_elapsed:5.1f}s] "
-                        f"({done_count}/{total_symbols_count} - "
-                        f"{done_pct:5.1f}%): {node.unique_id}"
-                    )
-                    print(done_msg, flush=True)
+                    print(f"       -> {done_msg}", flush=True)
             else:
                 with print_lock:
-                    completed_counter[0] += 1
-                    print(
-                        f"  {progress_str} [Static Info]: {node.unique_id}",
-                        flush=True,
+                    done_msg = tracker.advance(
+                        1,
+                        extra=f"[Static Info]: {node.unique_id}",
                     )
+                    print(f"  {done_msg}", flush=True)
 
             write_single_symbol_doc(
                 target_dir,
@@ -741,6 +734,7 @@ def run_docgen(
             )
 
         # Process Level by Level
+
         for lvl_idx, lvl_nodes in enumerate(level_groups):
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=concurrency
@@ -790,25 +784,16 @@ def run_docgen(
             for n in all_symbol_nodes
             if get_kind_prefix(n.symbol.kind) == "fn"
         ]
-        var_counter = [0]
-        var_done_counter = [0]
+        var_tracker = PhaseProgressTracker(
+            phase_label="Step 1/3: docgen (data)",
+            total=total_var_count,
+            is_tty=is_tty,
+        )
 
         def process_var_node(v_node: SymbolNode) -> None:
             v_sym = v_node.symbol
             v_rel = v_node.rel_path
             v_full = v_node.full_path
-
-            with print_lock:
-                var_counter[0] += 1
-                v_curr = var_counter[0]
-                v_percent = (
-                    (v_curr / total_var_count * 100.0)
-                    if total_var_count > 0
-                    else 100.0
-                )
-                v_progress = (
-                    f"[{v_curr}/{total_var_count} ({v_percent:5.1f}%)]"
-                )
 
             # Find parent container (class/struct/model)
             parent_container_info = None
@@ -930,11 +915,11 @@ def run_docgen(
                 ctx_desc = " | ".join(ctx_names)
 
                 with print_lock:
-                    print(
-                        f"  {v_progress} [Top-down Context Updating...]: "
+                    req_msg = var_tracker.render_current(
+                        extra=f"[Top-down Context Updating...]: "
                         f"{v_node.unique_id} ({ctx_desc})",
-                        flush=True,
                     )
+                    print(f"  {req_msg}", flush=True)
 
                 v_snippet = get_code_snippet(
                     v_full, v_sym.line_start, v_sym.line_end
@@ -982,19 +967,12 @@ def run_docgen(
                 db.save_symbol_cache(v_node.unique_id, save_payload)
 
                 with print_lock:
-                    var_done_counter[0] += 1
-                    vd = var_done_counter[0]
-                    v_pct = (
-                        (vd / total_var_count * 100.0)
-                        if total_var_count > 0
-                        else 100.0
+                    done_var_msg = var_tracker.advance(
+                        1,
+                        extra=v_node.unique_id,
+                        elapsed=var_elapsed,
                     )
-                    done_var_msg = (
-                        f"       -> [Done in {var_elapsed:5.1f}s] "
-                        f"({vd}/{total_var_count} - {v_pct:5.1f}%): "
-                        f"{v_node.unique_id}"
-                    )
-                    print(done_var_msg, flush=True)
+                    print(f"       -> {done_var_msg}", flush=True)
 
                 prefix_in_unique_id = ""
                 if "::" in v_node.unique_id:
@@ -1011,12 +989,12 @@ def run_docgen(
                 )
             else:
                 with print_lock:
-                    var_done_counter[0] += 1
-                    print(
-                        f"  {v_progress} [Retained Variable Context]: "
+                    done_var_msg = var_tracker.advance(
+                        1,
+                        extra=f"[Retained Variable Context]: "
                         f"{v_node.unique_id}",
-                        flush=True,
                     )
+                    print(f"  {done_var_msg}", flush=True)
 
         if var_nodes:
             with concurrent.futures.ThreadPoolExecutor(

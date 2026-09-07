@@ -2,14 +2,17 @@
 
 import hashlib
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional
+
 
 from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.progress import PhaseProgressTracker, is_terminal
 
 
 def generate_readme_doc(
@@ -19,15 +22,25 @@ def generate_readme_doc(
     force: bool = False,
     allow_fallback: bool = False,
     db: Optional[DocgenDB] = None,
+    is_tty: Optional[bool] = None,
 ) -> str:
     """Generate human-centric executive summary document: README.md."""
     norm_lang = normalize_language(language)
+    if is_tty is None:
+        is_tty = is_terminal(sys.stdout)
+    tracker = PhaseProgressTracker(
+        phase_label="Step 3/3: reportgen",
+        total=1,
+        is_tty=is_tty,
+    )
+
     docgen_dir = target_dir / ".docgen"
     design_dir = docgen_dir / "design"
     docs_dir = docgen_dir / "documents"
     out_file = docgen_dir / "README.md"
 
     # 1. Read design overview
+
     overview_text = ""
     overview_file = design_dir / "overview.md"
     if overview_file.exists():
@@ -111,11 +124,13 @@ def generate_readme_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            print("  [Cached]: .docgen/README.md")
+            c_msg = tracker.advance(1, extra="[Cached]: .docgen/README.md")
+            print(f"  {c_msg}", flush=True)
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
     start_t = time.time()
+
     sys_msg = (
         "You are an objective senior code analyst and technical writer. "
         "Strictly prohibit marketing fluff, promotional buzzwords, or "
@@ -281,7 +296,8 @@ topological dependency mapping.
         content = default_readme
 
     elapsed = time.time() - start_t
-    print(f"       -> [Done in {elapsed:5.1f}s]: .docgen/README.md")
+    done_msg = tracker.advance(1, extra=".docgen/README.md", elapsed=elapsed)
+    print(f"       -> {done_msg}", flush=True)
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
