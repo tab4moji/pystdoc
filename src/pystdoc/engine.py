@@ -38,6 +38,7 @@ from pystdoc.progress import (
     PhaseProgressTracker,
     is_terminal,
 )
+from pystdoc.perf import PerfProfileManager
 
 
 class FileLock:
@@ -523,6 +524,45 @@ def run_docgen(
             if force or is_sym_changed or doc_file_missing:
                 dirty_symbol_ids.add(node.unique_id)
 
+        perf_mgr = PerfProfileManager.get_instance()
+        host_str = llm_client.base_url if llm_client else None
+        model_str = llm_client.model if llm_client else None
+
+        node_est_durations: Dict[str, float] = {}
+        for node in all_symbol_nodes:
+            sym = node.symbol
+            line_cnt = max(1, sym.line_end - sym.line_start + 1)
+            is_static_bypass = (
+                "enum" in sym.kind.lower()
+                or sym.kind.lower() in (
+                    "enum_constant",
+                    "typedef",
+                    "field",
+                    "member",
+                    "variable",
+                    "const",
+                )
+            )
+            if node.unique_id not in dirty_symbol_ids and not force:
+                node_est_durations[node.unique_id] = 0.0
+            elif is_static_bypass or not llm_client:
+                node_est_durations[node.unique_id] = 0.001
+            else:
+                node_est_durations[node.unique_id] = perf_mgr.predict_duration(
+                    host=host_str,
+                    model=model_str,
+                    gen_type="bottom_symbol",
+                    symbol_kind=sym.kind,
+                    line_count=line_cnt,
+                )
+
+        remaining_est_total = sum(node_est_durations.values())
+        rem_lock = threading.Lock()
+
+        def get_current_eta() -> float:
+            with rem_lock:
+                return remaining_est_total / max(1, concurrency)
+
         actually_updated_symbol_ids: Set[str] = set()
         dirty_lock = threading.Lock()
         print_lock = threading.Lock()
@@ -531,8 +571,10 @@ def run_docgen(
             total=total_symbols_count,
             is_tty=is_tty,
         )
+        tracker.set_remaining_estimate(get_current_eta())
 
         def process_single_node(node: SymbolNode) -> None:
+            nonlocal remaining_est_total
             sym = node.symbol
             rel_path = node.rel_path
             full_path = node.full_path
@@ -583,9 +625,17 @@ def run_docgen(
                 sym.top_down_context = cached_data.get(
                     "top_down_context", sym.top_down_context
                 )
+                with rem_lock:
+                    remaining_est_total = max(
+                        0.0,
+                        remaining_est_total
+                        - node_est_durations.get(node.unique_id, 0.0),
+                    )
+                    curr_eta = remaining_est_total / max(1, concurrency)
                 tracker.advance(
                     1,
                     extra=f"[Cached] {node.unique_id}",
+                    est_remaining=curr_eta,
                 )
             elif is_static_bypass:
                 old_cache = (
@@ -616,9 +666,17 @@ def run_docgen(
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
+                with rem_lock:
+                    remaining_est_total = max(
+                        0.0,
+                        remaining_est_total
+                        - node_est_durations.get(node.unique_id, 0.0),
+                    )
+                    curr_eta = remaining_est_total / max(1, concurrency)
                 tracker.advance(
                     1,
                     extra=f"[Static Spec] {node.unique_id}",
+                    est_remaining=curr_eta,
                 )
             elif llm_client:
                 old_cache = (
@@ -635,6 +693,7 @@ def run_docgen(
                 )
                 tracker.render_current(
                     extra=f"Requesting: {node.unique_id}{dep_info}",
+                    est_remaining=get_current_eta(),
                 )
 
                 param_strs = [
@@ -643,6 +702,7 @@ def run_docgen(
                 ]
                 lang = get_code_language(full_path.suffix)
 
+                line_cnt = max(1, sym.line_end - sym.line_start + 1)
                 start_sym_time = time.time()
                 explanation = llm_client.explain_symbol(
                     name=sym.name,
@@ -658,6 +718,16 @@ def run_docgen(
                     allow_fallback=allow_fallback,
                 )
                 sym_elapsed = time.time() - start_sym_time
+
+                # Record measurement for regression learning
+                perf_mgr.record_measurement(
+                    host=host_str,
+                    model=model_str,
+                    gen_type="bottom_symbol",
+                    symbol_kind=sym.kind,
+                    line_count=line_cnt,
+                    elapsed_seconds=sym_elapsed,
+                )
 
                 if explanation.get("purpose"):
                     sym.purpose = explanation["purpose"]
@@ -694,15 +764,31 @@ def run_docgen(
                     if has_external_change and node.direct_caller_ids:
                         dirty_symbol_ids.update(node.direct_caller_ids)
 
+                with rem_lock:
+                    remaining_est_total = max(
+                        0.0,
+                        remaining_est_total
+                        - node_est_durations.get(node.unique_id, 0.0),
+                    )
+                    curr_eta = remaining_est_total / max(1, concurrency)
                 tracker.advance(
                     1,
                     extra=node.unique_id,
                     elapsed=sym_elapsed,
+                    est_remaining=curr_eta,
                 )
             else:
+                with rem_lock:
+                    remaining_est_total = max(
+                        0.0,
+                        remaining_est_total
+                        - node_est_durations.get(node.unique_id, 0.0),
+                    )
+                    curr_eta = remaining_est_total / max(1, concurrency)
                 tracker.advance(
                     1,
                     extra=f"[Static Info] {node.unique_id}",
+                    est_remaining=curr_eta,
                 )
 
             write_single_symbol_doc(
@@ -760,13 +846,38 @@ def run_docgen(
             for n in all_symbol_nodes
             if get_kind_prefix(n.symbol.kind) == "fn"
         ]
+
+        var_est_durations: Dict[str, float] = {}
+        for v in var_nodes:
+            v_sym = v.symbol
+            line_cnt = max(1, v_sym.line_end - v_sym.line_start + 1)
+            if not llm_client:
+                var_est_durations[v.unique_id] = 0.001
+            else:
+                var_est_durations[v.unique_id] = perf_mgr.predict_duration(
+                    host=host_str,
+                    model=model_str,
+                    gen_type="top_down",
+                    symbol_kind=v_sym.kind,
+                    line_count=line_cnt,
+                )
+
+        var_remaining_est_total = sum(var_est_durations.values())
+        var_rem_lock = threading.Lock()
+
+        def get_var_eta() -> float:
+            with var_rem_lock:
+                return var_remaining_est_total / max(1, concurrency)
+
         var_tracker = PhaseProgressTracker(
             phase_label="Step 2/4 docgen (data)",
             total=total_var_count,
             is_tty=is_tty,
         )
+        var_tracker.set_remaining_estimate(get_var_eta())
 
         def process_var_node(v_node: SymbolNode) -> None:
+            nonlocal var_remaining_est_total
             v_sym = v_node.symbol
             v_rel = v_node.rel_path
             v_full = v_node.full_path
@@ -894,12 +1005,14 @@ def run_docgen(
                     var_tracker.render_current(
                         extra=f"[Top-down Context Updating...]: "
                         f"{v_node.unique_id} ({ctx_desc})",
+                        est_remaining=get_var_eta(),
                     )
 
                 v_snippet = get_code_snippet(
                     v_full, v_sym.line_start, v_sym.line_end
                 )
                 lang = get_code_language(v_full.suffix)
+                line_cnt = max(1, v_sym.line_end - v_sym.line_start + 1)
 
                 start_var_time = time.time()
                 top_down_res = llm_client.refine_variable_top_down(
@@ -914,6 +1027,15 @@ def run_docgen(
                     parent_container_info=parent_container_info,
                 )
                 var_elapsed = time.time() - start_var_time
+
+                perf_mgr.record_measurement(
+                    host=host_str,
+                    model=model_str,
+                    gen_type="top_down",
+                    symbol_kind=v_sym.kind,
+                    line_count=line_cnt,
+                    elapsed_seconds=var_elapsed,
+                )
 
                 raw_v_role = (
                     top_down_res.get("architectural_context")
@@ -941,11 +1063,20 @@ def run_docgen(
                 db.save_symbol_cache(cache_key, save_payload)
                 db.save_symbol_cache(v_node.unique_id, save_payload)
 
+                with var_rem_lock:
+                    var_remaining_est_total = max(
+                        0.0,
+                        var_remaining_est_total
+                        - var_est_durations.get(v_node.unique_id, 0.0),
+                    )
+                    curr_eta = var_remaining_est_total / max(1, concurrency)
+
                 with print_lock:
                     var_tracker.advance(
                         1,
                         extra=v_node.unique_id,
                         elapsed=var_elapsed,
+                        est_remaining=curr_eta,
                     )
 
                 prefix_in_unique_id = ""
@@ -962,11 +1093,20 @@ def run_docgen(
                     language=norm_lang,
                 )
             else:
+                with var_rem_lock:
+                    var_remaining_est_total = max(
+                        0.0,
+                        var_remaining_est_total
+                        - var_est_durations.get(v_node.unique_id, 0.0),
+                    )
+                    curr_eta = var_remaining_est_total / max(1, concurrency)
+
                 with print_lock:
                     var_tracker.advance(
                         1,
                         extra=f"[Retained Variable Context]: "
                         f"{v_node.unique_id}",
+                        est_remaining=curr_eta,
                     )
 
         if var_nodes:

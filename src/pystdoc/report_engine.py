@@ -12,6 +12,7 @@ from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.perf import PerfProfileManager
 from pystdoc.progress import PhaseProgressTracker, is_terminal
 
 
@@ -28,11 +29,29 @@ def generate_readme_doc(
     norm_lang = normalize_language(language)
     if is_tty is None:
         is_tty = is_terminal(sys.stdout)
+
+    perf_mgr = PerfProfileManager.get_instance()
+    host_str = llm_client.base_url if llm_client else None
+    model_str = llm_client.model if llm_client else None
+
+    est_duration = (
+        perf_mgr.predict_duration(
+            host=host_str,
+            model=model_str,
+            gen_type="top_down",
+            symbol_kind="readme",
+            line_count=30,
+        )
+        if llm_client
+        else 0.001
+    )
+
     tracker = PhaseProgressTracker(
         phase_label="Step 4/4 reportgen",
         total=1,
         is_tty=is_tty,
     )
+    tracker.set_remaining_estimate(est_duration)
 
     docgen_dir = target_dir / ".docgen"
     design_dir = docgen_dir / "design"
@@ -297,6 +316,14 @@ topological dependency mapping.
         content = default_readme
 
     elapsed = time.time() - start_t
+    perf_mgr.record_measurement(
+        host=host_str,
+        model=model_str,
+        gen_type="top_down",
+        symbol_kind="readme",
+        line_count=30,
+        elapsed_seconds=elapsed,
+    )
     tracker.advance(1, extra=".docgen/README.md", elapsed=elapsed)
     tracker.finish()
 

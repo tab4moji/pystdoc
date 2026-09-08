@@ -13,6 +13,7 @@ from pystdoc.design_engine import (
 from pystdoc.progress import (
     is_terminal,
     render_pip_bar,
+    format_eta,
     format_progress_line,
     PhaseProgressTracker,
 )
@@ -37,6 +38,15 @@ def test_is_terminal():
     assert isinstance(is_terminal(), bool)
 
 
+def test_format_eta():
+    assert format_eta(None) == "--:--"
+    assert format_eta(-5) == "--:--"
+    assert format_eta(0) == "00:00"
+    assert format_eta(45) == "00:45"
+    assert format_eta(125) == "02:05"
+    assert format_eta(3665) == "01:01:05"
+
+
 def test_render_pip_bar():
     bar_0 = render_pip_bar(0, 0, width=10)
     assert bar_0 == "[━━━━━━━━━━]"
@@ -55,34 +65,64 @@ def test_render_pip_bar():
 
 
 def test_format_progress_line():
-    line_tty = format_progress_line(
+    # 1. TTY in-progress with ETA
+    line_tty_est = format_progress_line(
         phase_label="Step 1/4 docgen",
         current=5,
         total=10,
         extra="src/main.py",
         elapsed=1.23,
+        est_remaining=45.0,
         is_tty=True,
         width=10,
     )
-    assert "[Step 1/4 docgen]" in line_tty
-    assert "[━━━━━     ]" in line_tty
-    assert "5/10 ( 50.0%)" in line_tty
-    assert "[Done in   1.2s]" in line_tty
-    assert ": src/main.py" in line_tty
+    assert "[Step 1/4 docgen]" in line_tty_est
+    assert "[━━━━━     ]" in line_tty_est
+    assert "5/10 ( 50.0%)" in line_tty_est
+    assert "[Est: 00:45]" in line_tty_est
+    assert ": src/main.py" in line_tty_est
 
-    # TTY with empty extra
+    # 2. TTY in-progress without ETA but with elapsed
+    line_tty_elapsed = format_progress_line(
+        phase_label="Step 1/4 docgen",
+        current=5,
+        total=10,
+        extra="src/main.py",
+        elapsed=1.23,
+        est_remaining=None,
+        is_tty=True,
+        width=10,
+    )
+    assert "[Done in   1.2s]" in line_tty_elapsed
+
+    # 3. TTY completed (current == total) with elapsed
+    line_tty_done = format_progress_line(
+        phase_label="Step 1/4 docgen",
+        current=10,
+        total=10,
+        extra="src/main.py",
+        elapsed=2.5,
+        est_remaining=0.0,
+        is_tty=True,
+        width=10,
+    )
+    assert "[Done in   2.5s]" in line_tty_done
+
+    # 4. TTY with empty extra
     line_tty_empty = format_progress_line(
         phase_label="Step 1/4 docgen",
         current=5,
         total=10,
         extra="",
+        est_remaining=12.0,
         is_tty=True,
         width=10,
     )
     assert "[Step 1/4 docgen]" in line_tty_empty
-    assert line_tty_empty.endswith("5/10 ( 50.0%)")
+    assert "[Est: 00:12]" in line_tty_empty
+    assert line_tty_empty.endswith("[Est: 00:12]")
 
-    # TTY with long extra (testing truncation)
+    # 5. TTY with long extra (truncation)
     long_extra = "a" * 200
     line_tty_long = format_progress_line(
         phase_label="Step 1/4 docgen",
@@ -94,6 +134,7 @@ def test_format_progress_line():
     )
     assert "..." in line_tty_long
 
+    # 6. Non-TTY mode
     line_nontty = format_progress_line(
         phase_label="Step 1/4 docgen",
         current=10,
@@ -107,6 +148,19 @@ def test_format_progress_line():
     assert "10/10 (100.0%)" in line_nontty
     assert ": src/main.py" in line_nontty
 
+    # 7. Non-TTY with no extra
+    line_nontty_noextra = format_progress_line(
+        phase_label="Step 1/4 docgen",
+        current=10,
+        total=10,
+        extra="",
+        elapsed=1.0,
+        is_tty=False,
+    )
+    assert "[Step 1/4 docgen]" in line_nontty_noextra
+    assert "[Done in   1.0s]" in line_nontty_noextra
+
+    # 8. is_tty is None (auto-detect fallback)
     line_def = format_progress_line(
         phase_label="Step 3/4 designgen",
         current=0,
@@ -125,15 +179,16 @@ def test_phase_progress_tracker():
         width=10,
         stream=stream,
     )
+    tracker.set_remaining_estimate(30.0)
     assert tracker.total == 5
     assert tracker.current == 0
 
-    l1 = tracker.advance(1, extra="sym1", elapsed=0.5)
+    l1 = tracker.advance(1, extra="sym1", elapsed=0.5, est_remaining=25.0)
     assert "1/5 ( 20.0%)" in l1
     assert "sym1" in l1
     assert "\r" in stream.getvalue()
 
-    cur = tracker.render_current(extra="sym1_current")
+    cur = tracker.render_current(extra="sym1_current", est_remaining=20.0)
     assert "1/5 ( 20.0%)" in cur
     assert "sym1_current" in cur
 

@@ -24,6 +24,11 @@ def get_user_config_path() -> Path:
     return Path.home() / ".config" / "pystdoc" / "pystdoc.json"
 
 
+def get_perf_metrics_path() -> Path:
+    """Return performance metrics path ~/.config/pystdoc/perf_metrics.json."""
+    return get_user_config_path().parent / "perf_metrics.json"
+
+
 def _read_json_file(file_path: Path) -> Dict[str, Any]:
     """Safely read and parse a JSON configuration file."""
     if not file_path.exists() or not file_path.is_file():

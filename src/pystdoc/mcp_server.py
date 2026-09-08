@@ -175,29 +175,48 @@ def create_mcp_server(
         if watcher_mgr is not None and p.exists() and p.is_dir():
             watcher_mgr.watch_directory(p)
 
+    def _missing_docgen_msg(target: Path) -> str:
+        p_str = target.as_posix()
+        return (
+            f"Error: .docgen directory not found in {p_str}.\n"
+            "Guidance for Assistant: Documentation and symbol index are not "
+            "generated yet. Please politely ask the user for permission: "
+            f"'`.docgen` が未生成のため、`pystdoc sync --dir {p_str}` "
+            "を実行してインデックスとドキュメントを生成してもよろしいですか？' "
+            "(or equivalent in user's language). Once approved, call "
+            f"`pystdoc_sync(path='{p_str}')` or run "
+            f"`pystdoc sync --dir {p_str}`."
+        )
+
     server_instructions = (
         "pystdoc: Structural & Architecture Documentation MCP Server.\n"
         "Guidelines for LLM assistant (e.g. OpenCode):\n"
-        "1. To understand or explain the system/project, call "
+        "1. When .docgen is missing or ungenerated in the target workspace/"
+        "directory, DO NOT silently fail or abort. Politely inform the user "
+        "and ask for permission: '`.docgen` が未生成のため、`pystdoc sync "
+        "--dir ./` を実行してインデックスを生成してもよろしいですか？' "
+        "(or in the user's language). Once approved, call "
+        "`pystdoc_sync(path=...)` or run `pystdoc sync --dir ./`.\n"
+        "2. To understand or explain the system/project, call "
         "`pystdoc_get_overview` or `pystdoc_get_design(section='readme')`.\n"
-        "2. When asked where to modify code, how to implement/delete a "
+        "3. When asked where to modify code, how to implement/delete a "
         "feature, or where a specific UI/button/logic is located, "
         "DO NOT run grep/glob. Instead, call "
         "`pystdoc_locate_feature(query=...)`.\n"
-        "3. To trace callers, references, and dependencies before modifying "
+        "4. To trace callers, references, and dependencies before modifying "
         "or deleting code, call `pystdoc_trace_impact(symbol=...)`.\n"
-        "4. To explore architecture, data models, or execution flow, call "
+        "5. To explore architecture, data models, or execution flow, call "
         "`pystdoc_get_design` with 'overview', 'data_models', or "
         "'execution_model'.\n"
-        "5. To find classes, functions, or variables, call "
+        "6. To find classes, functions, or variables, call "
         "`pystdoc_search_symbols` or `pystdoc_list_symbols`.\n"
-        "6. To inspect signature and doc for a specific symbol, call "
+        "7. To inspect signature and doc for a specific symbol, call "
         "`pystdoc_get_symbol`.\n"
-        "7. When code changes or new symbols are added during coding, call "
+        "8. When code changes or new symbols are added during coding, call "
         "`pystdoc_sync(fast=True)` (highly recommended for OpenCode to "
         "rapidly refresh bottom-up symbol metadata and call graphs without "
         "heavy report overhead).\n"
-        "8. If documentation is completely missing or full architecture "
+        "9. If documentation is completely missing or full architecture "
         "reports/README need recreation, call `pystdoc_sync(fast=False)`."
     )
 
@@ -213,13 +232,17 @@ def create_mcp_server(
             "Find exact files, functions, UI components, or line ranges that "
             "need to be modified for a feature request, UI change, or bug fix "
             "(e.g. 'delete debug button', 'add auth header'). "
-            "Use this INSTEAD of grep/glob."
+            "Use this INSTEAD of grep/glob. If .docgen is missing, ask user "
+            "permission to run pystdoc sync."
         ),
     )
     def locate_feature(query: str, path: str = "./") -> str:
         """Find candidate locations and line ranges for a feature or UI."""
         target_dir = Path(path).resolve()
         _ensure_watching(target_dir)
+        docgen_dir = _get_docgen_dir(target_dir)
+        if not docgen_dir.exists():
+            return _missing_docgen_msg(target_dir)
         return locate_features(target_dir, query)
 
     @mcp.tool(
@@ -227,20 +250,25 @@ def create_mcp_server(
         description=(
             "Trace callers, references, and outbound dependencies of a "
             "symbol to determine what other files/functions are affected "
-            "before modifying or deleting code."
+            "before modifying or deleting code. If .docgen is missing, "
+            "ask user permission to run pystdoc sync."
         ),
     )
     def trace_symbol_impact(symbol: str, path: str = "./") -> str:
         """Trace callers and dependencies of a symbol for impact analysis."""
         target_dir = Path(path).resolve()
         _ensure_watching(target_dir)
+        docgen_dir = _get_docgen_dir(target_dir)
+        if not docgen_dir.exists():
+            return _missing_docgen_msg(target_dir)
         return trace_impact(target_dir, symbol)
 
     @mcp.tool(
         name="pystdoc_get_overview",
         description=(
             "Get the high-level executive summary, software classification, "
-            "purpose, and architectural overview of the project in one call."
+            "purpose, and architectural overview of the project in one call. "
+            "If .docgen is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_overview(path: str = "./") -> str:
@@ -249,10 +277,7 @@ def create_mcp_server(
         _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
-            return (
-                f"Error: .docgen directory not found in {target_dir}. "
-                "Please run pystdoc_sync first."
-            )
+            return _missing_docgen_msg(target_dir)
         readme_file = docgen_dir / "README.md"
         overview_file = docgen_dir / "design" / "overview.md"
         parts = []
@@ -291,10 +316,7 @@ def create_mcp_server(
         _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
-            return (
-                f"Error: .docgen directory not found in {target_dir}. "
-                "Please run pystdoc_sync first."
-            )
+            return _missing_docgen_msg(target_dir)
         db_path = docgen_dir / "index.db"
         if not db_path.exists():
             return "Error: index database (.docgen/index.db) not found."
@@ -363,7 +385,8 @@ def create_mcp_server(
         name="pystdoc_get_symbol",
         description=(
             "Get rich purpose, overview, signature, line ranges and "
-            "markdown doc for a symbol (function, class, variable, or FQDN)."
+            "markdown doc for a symbol (function, class, variable, or FQDN). "
+            "If .docgen is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_symbol(symbol: str, path: str = "./") -> str:
@@ -372,10 +395,7 @@ def create_mcp_server(
         _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
-            return (
-                f"Error: .docgen directory not found in {target_dir}. "
-                "Please run pystdoc_sync first."
-            )
+            return _missing_docgen_msg(target_dir)
 
         # Capture output or format response
         from io import StringIO
@@ -404,7 +424,8 @@ def create_mcp_server(
         name="pystdoc_list_symbols",
         description=(
             "List all indexed symbols (functions, variables, types/classes) "
-            "with definition line ranges (<file>:<from>:<to>)."
+            "with definition line ranges (<file>:<from>:<to>). "
+            "If .docgen is missing, ask user permission to run pystdoc sync."
         ),
     )
     def list_symbols(kind: str = "all", path: str = "./") -> str:
@@ -413,10 +434,7 @@ def create_mcp_server(
         _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
-            return (
-                f"Error: .docgen directory not found in {target_dir}. "
-                "Please run pystdoc_sync first."
-            )
+            return _missing_docgen_msg(target_dir)
 
         from io import StringIO
         import sys
@@ -451,7 +469,8 @@ def create_mcp_server(
         name="pystdoc_get_design",
         description=(
             "Get high-level architecture design documents ('readme', "
-            "'overview', 'data_models', 'execution_model', or module name)."
+            "'overview', 'data_models', 'execution_model', or module name). "
+            "If .docgen is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_design(section: str = "readme", path: str = "./") -> str:
@@ -460,10 +479,7 @@ def create_mcp_server(
         _ensure_watching(target_dir)
         docgen_dir = _get_docgen_dir(target_dir)
         if not docgen_dir.exists():
-            return (
-                f"Error: .docgen directory not found in {target_dir}. "
-                "Please run pystdoc_sync first."
-            )
+            return _missing_docgen_msg(target_dir)
 
         design_dir = docgen_dir / "design"
         sec = section.lower().strip()
@@ -516,12 +532,18 @@ def create_mcp_server(
 
     @mcp.tool(
         name="pystdoc_list_files",
-        description="List all indexed source code files.",
+        description=(
+            "List all indexed source code files. "
+            "If .docgen is missing, ask user permission to run pystdoc sync."
+        ),
     )
     def list_files(path: str = "./") -> str:
         """List all indexed source code files."""
         target_dir = Path(path).resolve()
         _ensure_watching(target_dir)
+        docgen_dir = _get_docgen_dir(target_dir)
+        if not docgen_dir.exists():
+            return _missing_docgen_msg(target_dir)
         from io import StringIO
         import sys
         old_stdout = sys.stdout

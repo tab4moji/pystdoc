@@ -12,6 +12,7 @@ from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.perf import PerfProfileManager
 from pystdoc.progress import PhaseProgressTracker, is_terminal
 from pystdoc.ui_detector import (
     annotate_documents_with_ui_context,
@@ -377,6 +378,18 @@ Structure the Markdown as follows:
         content = default_data_models
 
     elapsed = time.time() - start_t
+    perf_mgr = PerfProfileManager.get_instance()
+    host_str = llm_client.base_url if llm_client else None
+    model_str = llm_client.model if llm_client else None
+    perf_mgr.record_measurement(
+        host=host_str,
+        model=model_str,
+        gen_type="top_down",
+        symbol_kind="data_models",
+        line_count=len(types_raw) + len(vars_raw),
+        elapsed_seconds=elapsed,
+    )
+
     if tracker:
         tracker.advance(
             1,
@@ -514,6 +527,18 @@ Structure the Markdown as follows:
         content = default_exec_model
 
     elapsed = time.time() - start_t
+    perf_mgr = PerfProfileManager.get_instance()
+    host_str = llm_client.base_url if llm_client else None
+    model_str = llm_client.model if llm_client else None
+    perf_mgr.record_measurement(
+        host=host_str,
+        model=model_str,
+        gen_type="top_down",
+        symbol_kind="execution_model",
+        line_count=len(funcs_raw),
+        elapsed_seconds=elapsed,
+    )
+
     if tracker:
         tracker.advance(
             1,
@@ -647,6 +672,18 @@ Structure the Markdown as follows:
             content = default_mod_doc
 
         elapsed = time.time() - start_t
+        perf_mgr = PerfProfileManager.get_instance()
+        host_str = llm_client.base_url if llm_client else None
+        model_str = llm_client.model if llm_client else None
+        perf_mgr.record_measurement(
+            host=host_str,
+            model=model_str,
+            gen_type="top_down",
+            symbol_kind="module_doc",
+            line_count=len(reduced_module_elements.splitlines()),
+            elapsed_seconds=elapsed,
+        )
+
         if tracker:
             tracker.advance(
                 1,
@@ -787,6 +824,18 @@ Requirements:
         content = default_overview
 
     elapsed = time.time() - start_t
+    perf_mgr = PerfProfileManager.get_instance()
+    host_str = llm_client.base_url if llm_client else None
+    model_str = llm_client.model if llm_client else None
+    perf_mgr.record_measurement(
+        host=host_str,
+        model=model_str,
+        gen_type="top_down",
+        symbol_kind="overview",
+        line_count=len(mod_lines),
+        elapsed_seconds=elapsed,
+    )
+
     if tracker:
         tracker.advance(
             1,
@@ -916,11 +965,65 @@ def run_design_generation(
     modules = group_docs_by_module(parsed_docs)
     total_mods = len(modules)
     total_design_steps = 1 + 1 + total_mods + 1
+
+    perf_mgr = PerfProfileManager.get_instance()
+    host_str = llm_client.base_url if llm_client else None
+    model_str = llm_client.model if llm_client else None
+
+    est_data_models = (
+        perf_mgr.predict_duration(
+            host_str,
+            model_str,
+            "top_down",
+            "data_models",
+            len(type_docs) + len(var_docs),
+        )
+        if llm_client
+        else 0.001
+    )
+    est_exec_model = (
+        perf_mgr.predict_duration(
+            host_str,
+            model_str,
+            "top_down",
+            "execution_model",
+            len(fn_docs),
+        )
+        if llm_client
+        else 0.001
+    )
+    est_modules = sum(
+        perf_mgr.predict_duration(
+            host_str,
+            model_str,
+            "top_down",
+            "module_doc",
+            len(m_docs),
+        )
+        for m_docs in modules.values()
+    ) if llm_client else 0.001 * total_mods
+    est_overview = (
+        perf_mgr.predict_duration(
+            host_str,
+            model_str,
+            "top_down",
+            "overview",
+            total_mods,
+        )
+        if llm_client
+        else 0.001
+    )
+
+    total_design_est = (
+        est_data_models + est_exec_model + est_modules + est_overview
+    )
+
     tracker = PhaseProgressTracker(
         phase_label="Step 3/4 designgen",
         total=total_design_steps,
         is_tty=is_tty,
     )
+    tracker.set_remaining_estimate(total_design_est)
 
     # Step 1: Synthesize core data models
     data_models_content = generate_data_models_doc(

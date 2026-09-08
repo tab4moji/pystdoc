@@ -290,6 +290,24 @@ class TestMCPServer(unittest.TestCase):
         res = tool_fn(path=str(self.test_dir))
         self.assertIn("src/main.py", res)
 
+        with tempfile.TemporaryDirectory() as empty_dir:
+            res_no_dir = tool_fn(path=empty_dir)
+            self.assertIn("Error: .docgen directory not found", res_no_dir)
+
+    def test_mcp_locate_feature_missing_docgen(self):
+        server = create_mcp_server()
+        tool_fn = server._tool_manager.get_tool("pystdoc_locate_feature").fn
+        with tempfile.TemporaryDirectory() as empty_dir:
+            res = tool_fn(query="test", path=empty_dir)
+            self.assertIn("Error: .docgen directory not found", res)
+
+    def test_mcp_trace_impact_missing_docgen(self):
+        server = create_mcp_server()
+        tool_fn = server._tool_manager.get_tool("pystdoc_trace_impact").fn
+        with tempfile.TemporaryDirectory() as empty_dir:
+            res = tool_fn(symbol="test", path=empty_dir)
+            self.assertIn("Error: .docgen directory not found", res)
+
     def test_mcp_sync(self):
         server = create_mcp_server()
         tool_fn = None
