@@ -23,6 +23,7 @@ TARGET_EXTENSIONS: Set[str] = {
 
 EXCLUDED_DIRS: Set[str] = {
     ".git",
+    ".pystdoc",
     ".docgen",
     "build",
     "builddir",
@@ -62,10 +63,10 @@ def scan_files(target_dir: Path) -> List[Path]:
 
 
 def write_files_list(target_dir: Path, matched_files: List[Path]) -> Path:
-    """Write discovered file list to target_dir/.docgen/files.txt."""
-    docgen_dir = target_dir / ".docgen"
-    docgen_dir.mkdir(parents=True, exist_ok=True)
-    out_file = docgen_dir / "files.txt"
+    """Write discovered file list to target_dir/.pystdoc/files.txt."""
+    pystdoc_dir = target_dir / ".pystdoc"
+    pystdoc_dir.mkdir(parents=True, exist_ok=True)
+    out_file = pystdoc_dir / "files.txt"
 
     with open(out_file, "w", encoding="utf-8") as f:
         for rel_path in matched_files:

@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+DOCGEN_DIR_NAME = ".pystdoc"
+
 DEFAULT_CONFIG: Dict[str, Any] = {
     "host": "http://127.0.0.1:11434",
     "model": "gemma4-26b-a4b",

@@ -151,7 +151,7 @@ class TestEngineAndCache(unittest.TestCase):
                 language="English",
             )
             self.assertEqual(ret, 0)
-            self.assertTrue((self.test_dir / ".docgen" / "index.db").exists())
+            self.assertTrue((self.test_dir / ".pystdoc" / "index.db").exists())
 
 
 if __name__ == "__main__":

@@ -159,7 +159,7 @@ class TestLiveServer100(unittest.TestCase):
 
     def test_designgen_broken_json_and_fallback(self):
         # Prepare sample doc
-        doc_dir = self.test_dir / ".docgen" / "documents" / "src"
+        doc_dir = self.test_dir / ".pystdoc" / "documents" / "src"
         doc_dir.mkdir(parents=True, exist_ok=True)
         (doc_dir / "tool.c.md").write_text(
             "# src/tool.c\n## 1. Purpose\nTool logic.\n", encoding="utf-8"
@@ -218,7 +218,7 @@ class TestLiveServer100(unittest.TestCase):
         self.assertEqual(ret, 0)
 
         main_doc_path = (
-            self.test_dir / ".docgen" / "documents" / "src"
+            self.test_dir / ".pystdoc" / "documents" / "src"
             / "calc_app.c.fn.main.md"
         )
         self.assertTrue(main_doc_path.exists())

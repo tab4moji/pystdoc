@@ -4,7 +4,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pystdoc.symbols import Symbol
 
@@ -43,9 +43,16 @@ class DocgenDB:
                         unique_id TEXT PRIMARY KEY,
                         rel_path TEXT NOT NULL,
                         symbol_hash TEXT NOT NULL,
+                        logic_hash TEXT,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                try:
+                    self.conn.execute(
+                        "ALTER TABLE symbol_hashes ADD COLUMN logic_hash TEXT;"
+                    )
+                except Exception:
+                    pass
 
                 self.conn.execute("""
                     CREATE TABLE IF NOT EXISTS symbol_cache (
@@ -113,34 +120,63 @@ class DocgenDB:
             return is_changed
 
     def update_symbol_hash(
-        self, unique_id: str, rel_path: str, current_sym_hash: str
-    ) -> bool:
-        """Update symbol hash and return whether it changed."""
+        self,
+        unique_id: str,
+        rel_path: str,
+        current_sym_hash: str,
+        current_logic_hash: Optional[str] = None,
+    ) -> Tuple[bool, bool]:
+        """Update symbol hashes and return (is_full_changed,
+        is_logic_changed)."""
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
-                "SELECT symbol_hash FROM symbol_hashes WHERE unique_id = ?",
+                "SELECT symbol_hash, logic_hash FROM symbol_hashes "
+                "WHERE unique_id = ?",
                 (unique_id,),
             )
             row = cur.fetchone()
-            previous_hash = row["symbol_hash"] if row else None
-            is_changed = previous_hash != current_sym_hash
+            previous_full = row["symbol_hash"] if row else None
+            previous_logic = None
+            if row and "logic_hash" in row.keys():
+                previous_logic = row["logic_hash"]
 
-            if is_changed:
+            is_full_changed = previous_full != current_sym_hash
+
+            if previous_full is None:
+                is_logic_changed = True
+            elif current_logic_hash is not None and previous_logic is not None:
+                is_logic_changed = previous_logic != current_logic_hash
+            elif current_logic_hash is not None and previous_logic is None:
+                is_logic_changed = True
+            else:
+                is_logic_changed = is_full_changed
+
+            if is_full_changed or (
+                current_logic_hash is not None
+                and previous_logic != current_logic_hash
+            ):
                 with self.conn:
                     self.conn.execute(
                         """
                         INSERT INTO symbol_hashes (
-                            unique_id, rel_path, symbol_hash, updated_at
+                            unique_id, rel_path, symbol_hash,
+                            logic_hash, updated_at
                         )
-                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                         ON CONFLICT(unique_id) DO UPDATE SET
                             symbol_hash=excluded.symbol_hash,
+                            logic_hash=excluded.logic_hash,
                             updated_at=CURRENT_TIMESTAMP;
                     """,
-                        (unique_id, rel_path, current_sym_hash),
+                        (
+                            unique_id,
+                            rel_path,
+                            current_sym_hash,
+                            current_logic_hash,
+                        ),
                     )
-            return is_changed
+            return is_full_changed, is_logic_changed
 
     def save_symbol_cache(self, unique_id: str, data: Dict[str, Any]) -> None:
         """Save symbol LLM analysis result to SQLite with immediate commit."""
@@ -272,6 +308,26 @@ class DocgenDB:
                                    ensure_ascii=False),
                     ),
                 )
+
+    def load_symbol_metadata(
+        self, unique_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Load single symbol metadata from SQLite."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT unique_id, name, kind, fqdn, rel_path, line_start,
+                       line_end, signature, callees_json,
+                       referencing_funcs_json
+                FROM symbols_metadata WHERE unique_id = ?
+            """,
+                (unique_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+            return None
 
     def get_all_files(self) -> List[str]:
         """Return list of all indexed file relative paths."""

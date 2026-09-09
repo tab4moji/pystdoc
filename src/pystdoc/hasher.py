@@ -3,7 +3,8 @@
 import hashlib
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+import re
+from typing import Any, Optional, Tuple
 from pystdoc.symbols import Symbol, get_kind_prefix
 
 
@@ -16,11 +17,79 @@ def compute_file_hash(file_path: Path) -> str:
     return h.hexdigest()
 
 
+def strip_comments(code: str, lang: str = "") -> str:
+    """Remove comments from code snippet while preserving string literals."""
+    if not code:
+        return ""
+
+    lang_lower = lang.lower() if lang else ""
+
+    # Python AST-based comment removal if valid Python code
+    if lang_lower in ("python", "py"):
+        try:
+            import ast
+            parsed = ast.parse(code)
+            return ast.unparse(parsed).strip()
+        except Exception:
+            pass
+
+    def _replacer(match):
+        s = match.group(0)
+        if s.startswith("/") or (
+            s.startswith("#")
+            and not (s.startswith("'") or s.startswith('"'))
+        ):
+            return " "
+        return s
+
+    if lang_lower in ("sh", "bash", "shell", "python", "py"):
+        pattern = re.compile(
+            r'#.*?$|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|'
+            r"\'(?:\\.|[^\\\'])*\'|\"(?:\\.|[^\\\"])*\"",
+            re.MULTILINE,
+        )
+    else:
+        pattern = re.compile(
+            r'//.*?$|/\*[\s\S]*?\*/|'
+            r"\'(?:\\.|[^\\\'])*\'|\"(?:\\.|[^\\\"])*\"",
+            re.MULTILINE,
+        )
+
+    cleaned = pattern.sub(_replacer, code)
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
 def compute_symbol_hash(
     code_snippet: str, signature: str = "", doc: str = ""
 ) -> str:
-    """Calculate SHA-256 hash for an individual symbol's code & doc."""
+    """Calculate SHA-256 full hash for an individual symbol's code & doc."""
     raw = f"{signature}\n{doc}\n{code_snippet}".strip()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def compute_logic_hash(
+    code_snippet: str,
+    signature: str = "",
+    lang: str = "",
+    ast_node: Optional[Any] = None,
+) -> str:
+    """Calculate SHA-256 logic-only hash excluding comments and formatting."""
+    if ast_node is not None:
+        try:
+            import ast
+            if isinstance(ast_node, ast.AST):
+                ast_str = ast.dump(
+                    ast_node, annotate_fields=False, include_attributes=False
+                )
+                return hashlib.sha256(
+                    f"{signature}\n{ast_str}".encode("utf-8")
+                ).hexdigest()
+        except Exception:
+            pass
+
+    logic_code = strip_comments(code_snippet, lang=lang)
+    raw = f"{signature}\n{logic_code}".strip()
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -29,7 +98,7 @@ def update_hash_record(
 ) -> Tuple[bool, Path]:
     """Check and update file SHA-256 hash record with immediate flush."""
     hash_file = (
-        target_dir / ".docgen" / "documents" / f"{rel_path.as_posix()}.hash"
+        target_dir / ".pystdoc" / "documents" / f"{rel_path.as_posix()}.hash"
     )
     hash_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +132,7 @@ def update_symbol_hash_record(
     sym_id = f"{prefix_name}{symbol.name}" if prefix_name else symbol.name
     hash_file = (
         target_dir
-        / ".docgen"
+        / ".pystdoc"
         / "documents"
         / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.hash"
     )

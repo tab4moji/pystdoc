@@ -14,8 +14,8 @@ from pystdoc.report_engine import generate_readme_doc
 class TestReportgen(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path(tempfile.mkdtemp())
-        self.docgen_dir = self.test_dir / ".docgen"
-        self.design_dir = self.docgen_dir / "design"
+        self.pystdoc_dir = self.test_dir / ".pystdoc"
+        self.design_dir = self.pystdoc_dir / "design"
         self.design_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -55,14 +55,14 @@ class TestReportgen(unittest.TestCase):
         generate_readme_doc(
             target_dir=self.test_dir, llm_client=None, allow_fallback=True
         )
-        self.assertTrue((self.test_dir / ".docgen" / "README.md").exists())
+        self.assertTrue((self.test_dir / ".pystdoc" / "README.md").exists())
 
     def test_readme_caching_and_llm(self):
         from unittest.mock import MagicMock
         from pystdoc.db import DocgenDB
         from pystdoc.llm_client import LLMError
 
-        db = DocgenDB(self.docgen_dir / "index.db")
+        db = DocgenDB(self.pystdoc_dir / "index.db")
         mock_llm = MagicMock()
         mock_llm.chat_completion.side_effect = [
             "Answer 1",
@@ -108,7 +108,7 @@ class TestReportgen(unittest.TestCase):
         self.assertEqual(mock_llm.chat_completion.call_count, 3)
 
         # 4. Deleted file test: when README.md is deleted, it must regenerate
-        readme_file = self.test_dir / ".docgen" / "README.md"
+        readme_file = self.test_dir / ".pystdoc" / "README.md"
         self.assertTrue(readme_file.exists())
         readme_file.unlink()
         self.assertFalse(readme_file.exists())
@@ -140,7 +140,7 @@ class TestReportgen(unittest.TestCase):
 
         # 6. Inferred types test
         # 6a. GUI Application with UI annotation
-        docs_dir = self.docgen_dir / "documents"
+        docs_dir = self.pystdoc_dir / "documents"
         docs_dir.mkdir(parents=True, exist_ok=True)
         (docs_dir / "MainAct.kt.md").write_text(
             "- **Interaction Specification**: Activity UI event handler",

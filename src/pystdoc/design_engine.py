@@ -14,6 +14,7 @@ from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
 from pystdoc.perf import PerfProfileManager
 from pystdoc.progress import PhaseProgressTracker, is_terminal
+from pystdoc.interrupt import InterruptionState
 from pystdoc.ui_detector import (
     annotate_documents_with_ui_context,
     detect_ui_type,
@@ -288,7 +289,7 @@ def generate_data_models_doc(
     combined_input = f"{norm_lang}\n" + "\n".join(types_raw + vars_raw)
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"design::data_models::{norm_lang}"
-    out_file = target_dir / ".docgen" / "design" / "data_models.md"
+    out_file = target_dir / ".pystdoc" / "design" / "data_models.md"
 
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
@@ -296,7 +297,7 @@ def generate_data_models_doc(
             if tracker:
                 tracker.advance(1, extra="[Cached]: data_models.md")
             else:
-                print("  [Cached]: .docgen/design/data_models.md")
+                print("  [Cached]: .pystdoc/design/data_models.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
@@ -393,13 +394,13 @@ Structure the Markdown as follows:
     if tracker:
         tracker.advance(
             1,
-            extra=".docgen/design/data_models.md",
+            extra=".pystdoc/design/data_models.md",
             elapsed=elapsed,
         )
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
-            ".docgen/design/data_models.md"
+            ".pystdoc/design/data_models.md"
         )
 
     write_flushed_text(out_file, content.strip() + "\n")
@@ -434,7 +435,7 @@ def generate_execution_model_doc(
     combined_input = f"{norm_lang}\n" + "\n".join(funcs_raw)
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"design::execution_model::{norm_lang}"
-    out_file = target_dir / ".docgen" / "design" / "execution_model.md"
+    out_file = target_dir / ".pystdoc" / "design" / "execution_model.md"
 
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
@@ -444,7 +445,7 @@ def generate_execution_model_doc(
                     1, extra="[Cached]: execution_model.md"
                 )
             else:
-                print("  [Cached]: .docgen/design/execution_model.md")
+                print("  [Cached]: .pystdoc/design/execution_model.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
@@ -542,13 +543,13 @@ Structure the Markdown as follows:
     if tracker:
         tracker.advance(
             1,
-            extra=".docgen/design/execution_model.md",
+            extra=".pystdoc/design/execution_model.md",
             elapsed=elapsed,
         )
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
-            ".docgen/design/execution_model.md"
+            ".pystdoc/design/execution_model.md"
         )
 
     write_flushed_text(out_file, content.strip() + "\n")
@@ -572,6 +573,7 @@ def generate_module_docs(
     module_summaries = {}
 
     for mod_name, docs in modules.items():
+        InterruptionState.check_interrupted()
         doc_lines = [
             f"- `{d['file_name']}` ({d['kind']}): {d['purpose'][:120]}"
             for d in docs
@@ -583,7 +585,7 @@ def generate_module_docs(
         cache_key = f"design::module::{mod_name}::{norm_lang}"
         out_file = (
             target_dir
-            / ".docgen"
+            / ".pystdoc"
             / "design"
             / "modules"
             / f"{mod_name}.md"
@@ -598,7 +600,7 @@ def generate_module_docs(
                     )
                 else:
                     print(
-                        f"    [Cached]: .docgen/design/modules/{mod_name}.md"
+                        f"    [Cached]: .pystdoc/design/modules/{mod_name}.md"
                     )
                 write_flushed_text(out_file, cached_content.strip() + "\n")
                 module_summaries[mod_name] = cached_content
@@ -687,13 +689,13 @@ Structure the Markdown as follows:
         if tracker:
             tracker.advance(
                 1,
-                extra=f".docgen/design/modules/{mod_name}.md",
+                extra=f".pystdoc/design/modules/{mod_name}.md",
                 elapsed=elapsed,
             )
         else:
             print(
                 f"         -> [Done in {elapsed:5.1f}s]: "
-                f".docgen/design/modules/{mod_name}.md"
+                f".pystdoc/design/modules/{mod_name}.md"
             )
 
         write_flushed_text(out_file, content.strip() + "\n")
@@ -735,7 +737,7 @@ def generate_overview_doc(
     )
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"design::overview::{norm_lang}"
-    out_file = target_dir / ".docgen" / "design" / "overview.md"
+    out_file = target_dir / ".pystdoc" / "design" / "overview.md"
 
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
@@ -743,7 +745,7 @@ def generate_overview_doc(
             if tracker:
                 tracker.advance(1, extra="[Cached]: overview.md")
             else:
-                print("  [Cached]: .docgen/design/overview.md")
+                print("  [Cached]: .pystdoc/design/overview.md")
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
@@ -839,13 +841,13 @@ Requirements:
     if tracker:
         tracker.advance(
             1,
-            extra=".docgen/design/overview.md",
+            extra=".pystdoc/design/overview.md",
             elapsed=elapsed,
         )
     else:
         print(
             f"       -> [Done in {elapsed:5.1f}s]: "
-            ".docgen/design/overview.md"
+            ".pystdoc/design/overview.md"
         )
 
     write_flushed_text(out_file, content.strip() + "\n")
@@ -869,16 +871,24 @@ def run_design_generation(
     allow_fallback: bool = False,
     is_tty: Optional[bool] = None,
 ) -> int:
-    """Main pipeline for synthesizing .docgen/design/ documents."""
+    """Main pipeline for synthesizing .pystdoc/design/ documents."""
+    if InterruptionState.is_interrupted():
+        print(
+            "\n[Interrupted] designgen aborted safely by user "
+            "(Ctrl-C or 'q').",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 130
     target_dir = target_dir.resolve()
     norm_lang = normalize_language(language)
     if is_tty is None:
         is_tty = is_terminal(sys.stdout)
-    docs_dir = target_dir / ".docgen" / "documents"
+    docs_dir = target_dir / ".pystdoc" / "documents"
 
     if not docs_dir.exists():
         print(
-            f"Error: .docgen/documents/ does not exist: {docs_dir}",
+            f"Error: .pystdoc/documents/ does not exist: {docs_dir}",
             file=sys.stderr,
         )
         return 1
@@ -888,7 +898,7 @@ def run_design_generation(
         f"SQLite Caching & Map-Reduce Enabled): {target_dir} ==="
     )
 
-    db_path = target_dir / ".docgen" / "index.db"
+    db_path = target_dir / ".pystdoc" / "index.db"
     db = DocgenDB(db_path)
 
     llm_client = None
@@ -908,19 +918,13 @@ def run_design_generation(
                 f"context: {client.context_size}{auth_info})"
             )
         else:
-            if not allow_fallback:
-                print(
-                    f"Error: Failed to connect to LLM server "
-                    f"({client.base_url}). Aborting without --allow-fallback.",
-                    file=sys.stderr,
-                )
-                db.close()
-                return 1
-            else:
-                print(
-                    f"[LLM Warning] LLM server unreachable "
-                    f"({client.base_url}). Fallback to static templates."
-                )
+            print(
+                f"Error: Failed to connect to LLM server "
+                f"({client.base_url}). Aborting.",
+                file=sys.stderr,
+            )
+            db.close()
+            return 1
 
     all_md_files = (
         list(docs_dir.glob("*.md")) + list(docs_dir.glob("**/*.md"))
@@ -1025,60 +1029,85 @@ def run_design_generation(
     )
     tracker.set_remaining_estimate(total_design_est)
 
-    # Step 1: Synthesize core data models
-    data_models_content = generate_data_models_doc(
-        type_docs=type_docs,
-        var_docs=var_docs,
-        llm_client=llm_client,
-        target_dir=target_dir,
-        db=db,
-        language=norm_lang,
-        force=force,
-        allow_fallback=allow_fallback,
-        tracker=tracker,
-    )
+    try:
+        InterruptionState.check_interrupted()
+        # Step 1: Synthesize core data models
+        data_models_content = generate_data_models_doc(
+            type_docs=type_docs,
+            var_docs=var_docs,
+            llm_client=llm_client,
+            target_dir=target_dir,
+            db=db,
+            language=norm_lang,
+            force=force,
+            allow_fallback=allow_fallback,
+            tracker=tracker,
+        )
 
-    # Step 2: Identify system execution model
-    execution_model_content = generate_execution_model_doc(
-        fn_docs=fn_docs,
-        llm_client=llm_client,
-        target_dir=target_dir,
-        db=db,
-        language=norm_lang,
-        force=force,
-        allow_fallback=allow_fallback,
-        ui_info=ui_info,
-        tracker=tracker,
-    )
+        InterruptionState.check_interrupted()
+        # Step 2: Identify system execution model
+        execution_model_content = generate_execution_model_doc(
+            fn_docs=fn_docs,
+            llm_client=llm_client,
+            target_dir=target_dir,
+            db=db,
+            language=norm_lang,
+            force=force,
+            allow_fallback=allow_fallback,
+            ui_info=ui_info,
+            tracker=tracker,
+        )
 
-    # Step 3: Derive module relationships and interfaces
-    module_summaries = generate_module_docs(
-        modules=modules,
-        llm_client=llm_client,
-        target_dir=target_dir,
-        db=db,
-        language=norm_lang,
-        force=force,
-        allow_fallback=allow_fallback,
-        tracker=tracker,
-    )
+        InterruptionState.check_interrupted()
+        # Step 3: Derive module relationships and interfaces
+        module_summaries = generate_module_docs(
+            modules=modules,
+            llm_client=llm_client,
+            target_dir=target_dir,
+            db=db,
+            language=norm_lang,
+            force=force,
+            allow_fallback=allow_fallback,
+            tracker=tracker,
+        )
 
-    # Step 4: Synthesize architecture overview & diagrams
-    generate_overview_doc(
-        data_models_content=data_models_content,
-        execution_model_content=execution_model_content,
-        module_summaries=module_summaries,
-        llm_client=llm_client,
-        target_dir=target_dir,
-        db=db,
-        language=norm_lang,
-        force=force,
-        allow_fallback=allow_fallback,
-        ui_info=ui_info,
-        tracker=tracker,
-    )
+        InterruptionState.check_interrupted()
+        # Step 4: Synthesize architecture overview & diagrams
+        generate_overview_doc(
+            data_models_content=data_models_content,
+            execution_model_content=execution_model_content,
+            module_summaries=module_summaries,
+            llm_client=llm_client,
+            target_dir=target_dir,
+            db=db,
+            language=norm_lang,
+            force=force,
+            allow_fallback=allow_fallback,
+            ui_info=ui_info,
+            tracker=tracker,
+        )
 
-    tracker.finish()
-    db.close()
-    print("=== designgen Finished: Successfully built documentation ===")
-    return 0
+        tracker.finish()
+        if db is not None:
+            db.close()
+        print("=== designgen Finished: Successfully built documentation ===")
+        return 0
+    except KeyboardInterrupt:
+        InterruptionState.set_interrupted()
+        if tracker:
+            try:
+                tracker.finish()
+            except Exception:
+                pass
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+        print(
+            "\n[Interrupted] designgen aborted safely by user "
+            "(Ctrl-C or 'q').",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 130

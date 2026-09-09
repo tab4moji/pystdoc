@@ -4,11 +4,12 @@ import json
 import os
 import re
 import subprocess
-import time
 from pathlib import Path
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
+
+from pystdoc.interrupt import InterruptionState, interruptible_sleep
 
 
 class LLMError(RuntimeError):
@@ -273,8 +274,12 @@ class LLMClient:
         max_retries: int = 3,
         temperature: float = 0.2,
         seed: Optional[int] = None,
+        stream: bool = True,
+        on_chunk: Optional[Any] = None,
     ) -> str:
-        """Execute chat completion request with retry and dynamic seed loop."""
+        """Execute chat completion request with streaming SSE
+        and dynamic seed.
+        """
         url = f"{self.base_url}/chat/completions"
         req_timeout = timeout or self.default_timeout
         base_seed = seed if seed is not None else 42
@@ -290,6 +295,7 @@ class LLMClient:
                 "temperature": current_temp,
                 "max_tokens": max_tokens,
                 "seed": current_seed,
+                "stream": stream,
                 "options": {
                     "num_ctx": self.context_size,
                     "seed": current_seed,
@@ -307,15 +313,77 @@ class LLMClient:
                 req.add_header("Authorization", f"Bearer {self.token}")
 
             try:
-                with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-                    res_data = json.loads(resp.read().decode("utf-8"))
-                    content = res_data["choices"][0]["message"]["content"]
-                    if content and content.strip():
-                        return content
+                resp = urllib.request.urlopen(req, timeout=req_timeout)
+                InterruptionState.register_resource(resp)
+                try:
+                    accumulated: List[str] = []
+                    current_chars = 0
+                    is_sse = False
+                    raw_lines: List[bytes] = []
+
+                    while True:
+                        InterruptionState.check_interrupted()
+                        line = resp.readline()
+                        if not line:
+                            break
+                        raw_lines.append(line)
+                        line_str = line.decode(
+                            "utf-8", errors="replace"
+                        ).strip()
+                        if not line_str:
+                            continue
+                        if line_str.startswith("data:"):
+                            is_sse = True
+                            data_part = line_str[5:].strip()
+                            if data_part == "[DONE]":
+                                break
+                            try:
+                                chunk_json = json.loads(data_part)
+                                choices = chunk_json.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content_piece = delta.get("content")
+                                    if content_piece:
+                                        accumulated.append(content_piece)
+                                        current_chars += len(content_piece)
+                                        if on_chunk:
+                                            on_chunk(
+                                                content_piece, current_chars
+                                            )
+                            except Exception:
+                                pass
+
+                    if is_sse:
+                        full_content = "".join(accumulated)
+                        if full_content and full_content.strip():
+                            return full_content
+                    else:
+                        full_raw = b"".join(raw_lines)
+                        if full_raw:
+                            try:
+                                res_data = json.loads(
+                                    full_raw.decode("utf-8", errors="replace")
+                                )
+                                content = res_data["choices"][0]["message"][
+                                    "content"
+                                ]
+                                if content and content.strip():
+                                    if on_chunk:
+                                        on_chunk(content, len(content))
+                                    return content
+                            except Exception:
+                                pass
+
                     last_error = "Received empty response content from LLM"
                     if attempt < max_retries:
-                        time.sleep(1.0 * attempt)
+                        interruptible_sleep(1.0 * attempt)
                         continue
+                finally:
+                    InterruptionState.unregister_resource(resp)
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
             except urllib.error.HTTPError as he:
                 err_body = ""
                 try:
@@ -327,12 +395,16 @@ class LLMClient:
                 if he.code == 404:
                     break
                 if attempt < max_retries:
-                    time.sleep(1.0 * attempt)
+                    interruptible_sleep(1.0 * attempt)
                     continue
+            except KeyboardInterrupt:
+                InterruptionState.set_interrupted()
+                raise
             except Exception as e:
+                InterruptionState.check_interrupted()
                 last_error = str(e)
                 if attempt < max_retries:
-                    time.sleep(1.0 * attempt)
+                    interruptible_sleep(1.0 * attempt)
                     continue
 
         raise LLMError(
@@ -353,6 +425,7 @@ class LLMClient:
         language: str = "English",
         allow_fallback: bool = False,
         max_attempts: int = 3,
+        on_chunk: Optional[Any] = None,
     ) -> Dict[str, str]:
         """Generate concise explanations for a symbol in JSON with retry."""
         prompt = f"""Please analyze {lang} symbol `{name}` ({kind})
@@ -408,6 +481,8 @@ Return ONLY a valid JSON object matching these keys:
                     max_retries=1,
                     seed=42 + (attempt - 1) * 100,
                     temperature=0.15 + (attempt - 1) * 0.1,
+                    stream=True,
+                    on_chunk=on_chunk,
                 )
                 parsed = extract_json_from_text(raw_res)
                 norm = normalize_llm_json_dict(parsed)
@@ -424,7 +499,7 @@ Return ONLY a valid JSON object matching these keys:
             except Exception as e:
                 last_exc = e
                 if attempt < max_attempts:
-                    time.sleep(0.5 * attempt)
+                    interruptible_sleep(0.5 * attempt)
                     continue
 
         if not allow_fallback:
@@ -467,6 +542,7 @@ Return ONLY a valid JSON object matching these keys:
         allow_fallback: bool = False,
         parent_container_info: Optional[Dict[str, str]] = None,
         max_attempts: int = 3,
+        on_chunk: Optional[Any] = None,
     ) -> Dict[str, str]:
         """Refine variable significance using top-down context with retry."""
         context_lines = []
@@ -527,6 +603,8 @@ Return ONLY a valid JSON object:
                     max_retries=1,
                     seed=42 + (attempt - 1) * 100,
                     temperature=0.15 + (attempt - 1) * 0.1,
+                    stream=True,
+                    on_chunk=on_chunk,
                 )
                 parsed = extract_json_from_text(raw_res)
                 norm = normalize_llm_json_dict(parsed)
@@ -546,7 +624,7 @@ Return ONLY a valid JSON object:
             except Exception as e:
                 last_exc = e
                 if attempt < max_attempts:
-                    time.sleep(0.5 * attempt)
+                    interruptible_sleep(0.5 * attempt)
                     continue
 
         if not allow_fallback:

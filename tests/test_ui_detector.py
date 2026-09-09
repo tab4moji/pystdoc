@@ -312,7 +312,7 @@ class TestUIDetector(unittest.TestCase):
     def test_design_engine_with_ui_context(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            docgen_dir = tmp_path / ".docgen"
+            docgen_dir = tmp_path / ".pystdoc"
             design_dir = docgen_dir / "design"
             docs_dir = docgen_dir / "documents"
             docs_dir.mkdir(parents=True)

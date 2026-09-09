@@ -167,15 +167,18 @@ class TestLLMClient(unittest.TestCase):
 
         mock_resp_obj = MagicMock()
         content_str = "{\"purpose\": \"Success\"}"
-        mock_resp_obj.read.return_value = json.dumps({
+        body_bytes = json.dumps({
             "choices": [{"message": {"content": content_str}}]
         }).encode("utf-8")
+        mock_resp_obj.read.return_value = body_bytes
+        lines_iter = [body_bytes, b""]
+        mock_resp_obj.readline.side_effect = (
+            lambda: lines_iter.pop(0) if lines_iter else b""
+        )
+        mock_resp_obj.__enter__.return_value = mock_resp_obj
+        mock_resp_obj.__exit__.return_value = None
 
-        mock_resp_ctx = MagicMock()
-        mock_resp_ctx.__enter__.return_value = mock_resp_obj
-        mock_resp_ctx.__exit__.return_value = None
-
-        with patch("urllib.request.urlopen", return_value=mock_resp_ctx):
+        with patch("urllib.request.urlopen", return_value=mock_resp_obj):
             res = client.chat_completion(
                 [{"role": "user", "content": "hello"}],
                 json_mode=True,
@@ -410,7 +413,9 @@ class TestLLMClient(unittest.TestCase):
         )
 
         with patch("urllib.request.urlopen", side_effect=http_err_500):
-            with patch("time.sleep") as mock_sleep:
+            with patch(
+                "pystdoc.llm_client.interruptible_sleep"
+            ) as mock_sleep:
                 with self.assertRaises(LLMError):
                     client.chat_completion(
                         [{"role": "user", "content": "test"}], max_retries=2

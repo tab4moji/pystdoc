@@ -68,8 +68,11 @@ class DNotifyWatcher:
         watched_dirs: Set[Path] = set()
         for rel in matched_files:
             parent = (self.target_dir / rel).parent
-            # Strictly exclude .docgen and other excluded directories
-            if ".docgen" not in parent.parts:
+            # Strictly exclude .pystdoc, .docgen, and other excluded dirs
+            if (
+                ".pystdoc" not in parent.parts
+                and ".docgen" not in parent.parts
+            ):
                 watched_dirs.add(parent)
 
         if not watched_dirs and self.target_dir.exists():

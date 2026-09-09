@@ -21,6 +21,7 @@ from pystdoc.query import (
     run_types,
     run_variables,
 )
+from pystdoc.interrupt import KeyboardInterruptWatcher, safe_exit
 from pystdoc.report_engine import generate_readme_doc
 
 
@@ -116,22 +117,30 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
     )
 
     is_tty = is_terminal(sys.stdout)
-    sys.exit(
-        run_docgen(
-            target_dir=target,
-            use_llm=not args.no_llm,
-            host=host,
-            model=model,
-            token=token,
-            context_size=ctx_size,
-            language=lang,
-            force=args.force,
-            allow_fallback=allow_fallback,
-            compile_commands_path=args.compile_commands,
-            concurrency=concurrency,
-            is_tty=is_tty,
-        )
-    )
+    with KeyboardInterruptWatcher(enabled=is_tty):
+        try:
+            ret = run_docgen(
+                target_dir=target,
+                use_llm=not args.no_llm,
+                host=host,
+                model=model,
+                token=token,
+                context_size=ctx_size,
+                language=lang,
+                force=args.force,
+                allow_fallback=allow_fallback,
+                compile_commands_path=args.compile_commands,
+                concurrency=concurrency,
+                is_tty=is_tty,
+            )
+            sys.exit(ret)
+        except KeyboardInterrupt:
+            print(
+                "\n[Interrupted] docgen cancelled by user (Ctrl-C or 'q').",
+                file=sys.stderr,
+                flush=True,
+            )
+            safe_exit(130)
 
 
 def designgen_main(argv: Optional[List[str]] = None) -> None:
@@ -213,20 +222,28 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
     )
 
     is_tty = is_terminal(sys.stdout)
-    sys.exit(
-        run_design_generation(
-            target_dir=target,
-            use_llm=not args.no_llm,
-            host=host,
-            model=model,
-            token=token,
-            context_size=ctx_size,
-            language=lang,
-            force=args.force,
-            allow_fallback=allow_fallback,
-            is_tty=is_tty,
-        )
-    )
+    with KeyboardInterruptWatcher(enabled=is_tty):
+        try:
+            ret = run_design_generation(
+                target_dir=target,
+                use_llm=not args.no_llm,
+                host=host,
+                model=model,
+                token=token,
+                context_size=ctx_size,
+                language=lang,
+                force=args.force,
+                allow_fallback=allow_fallback,
+                is_tty=is_tty,
+            )
+            sys.exit(ret)
+        except KeyboardInterrupt:
+            print(
+                "\n[Interrupted] designgen cancelled by user (Ctrl-C or 'q').",
+                file=sys.stderr,
+                flush=True,
+            )
+            safe_exit(130)
 
 
 def _parse_query_target_and_symbol(
@@ -332,7 +349,7 @@ def run_watch(
             if client.check_availability():
                 llm_client = client
 
-        db_path = target_dir / ".docgen" / "index.db"
+        db_path = target_dir / ".pystdoc" / "index.db"
         db = DocgenDB(db_path) if db_path.exists() else None
         generate_readme_doc(
             target_dir=target_dir,
@@ -660,109 +677,124 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
 
     is_tty = is_terminal(sys.stdout)
     pipeline_mode_label = " (Fast bottom-up)" if args.fast else ""
+    hint_msg = " [Ctrl-C or 'q' to abort safely]" if is_tty else ""
 
     print("=" * 64)
     hdr = (
         f"=== pystdoc Unified Pipeline v{pystdoc.__version__}"
-        f"{pipeline_mode_label} (Lang: {lang}): {target_dir} ==="
+        f"{pipeline_mode_label} (Lang: {lang}): {target_dir}{hint_msg} ==="
     )
     print(hdr)
     print("=" * 64)
 
-    # 1. docgen (Steps 1-2/4 or Steps 1-2/2)
-    if not args.skip_docgen:
-        step_label = (
-            "[Steps 1-2/2] docgen (Fast bottom-up mode)"
-            if args.fast
-            else "[Steps 1-2/4] docgen"
-        )
-        print(
-            f"\n>>> {step_label}: "
-            "Parsing source code and generating symbol docs..."
-        )
-        ret_docgen = run_docgen(
-            target_dir=target_dir,
-            use_llm=not args.no_llm,
-            host=host,
-            model=model,
-            token=token,
-            context_size=ctx_size,
-            language=lang,
-            force=args.force,
-            allow_fallback=allow_fallback,
-            compile_commands_path=args.compile_commands,
-            concurrency=concurrency,
-            is_tty=is_tty,
-        )
-        if ret_docgen != 0:
-            sys.exit(ret_docgen)
+    with KeyboardInterruptWatcher(enabled=is_tty):
+        try:
+            # 1. docgen (Steps 1-2/4 or Steps 1-2/2)
+            if not args.skip_docgen:
+                step_label = (
+                    "[Steps 1-2/2] docgen (Fast bottom-up mode)"
+                    if args.fast
+                    else "[Steps 1-2/4] docgen"
+                )
+                print(
+                    f"\n>>> {step_label}: "
+                    "Parsing source code and generating symbol docs..."
+                )
+                ret_docgen = run_docgen(
+                    target_dir=target_dir,
+                    use_llm=not args.no_llm,
+                    host=host,
+                    model=model,
+                    token=token,
+                    context_size=ctx_size,
+                    language=lang,
+                    force=args.force,
+                    allow_fallback=allow_fallback,
+                    compile_commands_path=args.compile_commands,
+                    concurrency=concurrency,
+                    is_tty=is_tty,
+                )
+                if ret_docgen != 0:
+                    sys.exit(ret_docgen)
 
-    if args.fast:
-        print("=" * 64)
-        print(f"=== pystdoc Fast Sync Finished: {target_dir / '.docgen'} ===")
-        print("=" * 64)
-        sys.exit(0)
+            if args.fast:
+                print("=" * 64)
+                print(
+                    f"=== pystdoc Fast Sync Finished: "
+                    f"{target_dir / '.pystdoc'} ==="
+                )
+                print("=" * 64)
+                sys.exit(0)
 
-    # 2. designgen (Step 3/4)
-    if not args.skip_designgen:
-        print(
-            "\n>>> [Step 3/4] designgen: "
-            "Synthesizing architecture and data models..."
-        )
-        ret_design = run_design_generation(
-            target_dir=target_dir,
-            use_llm=not args.no_llm,
-            host=host,
-            model=model,
-            token=token,
-            context_size=ctx_size,
-            language=lang,
-            force=args.force,
-            allow_fallback=allow_fallback,
-            is_tty=is_tty,
-        )
-        if ret_design != 0:
-            sys.exit(ret_design)
+            # 2. designgen (Step 3/4)
+            if not args.skip_designgen:
+                print(
+                    "\n>>> [Step 3/4] designgen: "
+                    "Synthesizing architecture and data models..."
+                )
+                ret_design = run_design_generation(
+                    target_dir=target_dir,
+                    use_llm=not args.no_llm,
+                    host=host,
+                    model=model,
+                    token=token,
+                    context_size=ctx_size,
+                    language=lang,
+                    force=args.force,
+                    allow_fallback=allow_fallback,
+                    is_tty=is_tty,
+                )
+                if ret_design != 0:
+                    sys.exit(ret_design)
 
-    # 3. reportgen (Step 4/4)
-    print(
-        "\n>>> [Step 4/4] reportgen: "
-        "Generating project overview README (.docgen/README.md)..."
-    )
-
-    llm_client = None
-    if not args.no_llm:
-        client = LLMClient(
-            host=host,
-            model=model,
-            token=token,
-            context_size=ctx_size,
-        )
-        if client.check_availability():
-            llm_client = client
-        elif not allow_fallback:
+            # 3. reportgen (Step 4/4)
             print(
-                f"Error: Failed to connect to LLM server ({client.base_url}).",
-                file=sys.stderr,
+                "\n>>> [Step 4/4] reportgen: "
+                "Generating project overview README (.pystdoc/README.md)..."
             )
-            sys.exit(1)
 
-    db_path = target_dir / ".docgen" / "index.db"
-    db = DocgenDB(db_path) if db_path.exists() else None
+            llm_client = None
+            if not args.no_llm:
+                client = LLMClient(
+                    host=host,
+                    model=model,
+                    token=token,
+                    context_size=ctx_size,
+                )
+                if client.check_availability():
+                    llm_client = client
+                else:
+                    print(
+                        f"Error: Failed to connect to LLM server "
+                        f"({client.base_url}). Aborting.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
-    generate_readme_doc(
-        target_dir=target_dir,
-        llm_client=llm_client,
-        language=lang,
-        force=args.force,
-        allow_fallback=allow_fallback,
-        db=db,
-        is_tty=is_tty,
-    )
+            db_path = target_dir / ".pystdoc" / "index.db"
+            db = DocgenDB(db_path) if db_path.exists() else None
 
-    out_readme = target_dir / ".docgen" / "README.md"
+            generate_readme_doc(
+                target_dir=target_dir,
+                llm_client=llm_client,
+                language=lang,
+                force=args.force,
+                allow_fallback=allow_fallback,
+                db=db,
+                is_tty=is_tty,
+            )
 
-    print("=" * 64)
-    print(f"=== reportgen Finished: Created {out_readme} ===")
-    print("=" * 64)
-    sys.exit(0)
+            out_readme = target_dir / ".pystdoc" / "README.md"
+
+            print("=" * 64)
+            print(f"=== reportgen Finished: Created {out_readme} ===")
+            print("=" * 64)
+            sys.exit(0)
+        except KeyboardInterrupt:
+            print(
+                "\n[Interrupted] Pipeline cancelled by user (Ctrl-C or 'q'). "
+                "Partial progress saved.",
+                file=sys.stderr,
+                flush=True,
+            )
+            safe_exit(130)

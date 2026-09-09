@@ -176,7 +176,7 @@ class TestFinal100(unittest.TestCase):
     def test_hasher_symbol_read_exception(self):
         sym = Symbol(name="g_x", kind="variable", line_start=1, line_end=1)
         sym_hash_f = (
-            self.test_dir / ".docgen" / "documents" / "file.c.var.g_x.hash"
+            self.test_dir / ".pystdoc" / "documents" / "file.c.var.g_x.hash"
         )
         sym_hash_f.parent.mkdir(parents=True, exist_ok=True)
         sym_hash_f.write_text("old_hash", encoding="utf-8")
@@ -470,7 +470,7 @@ class TestFinal100(unittest.TestCase):
         self.assertEqual(ret_no_docs, 1)
 
         # Create docs dir for server check
-        (self.test_dir / ".docgen" / "documents").mkdir(
+        (self.test_dir / ".pystdoc" / "documents").mkdir(
             parents=True, exist_ok=True
         )
         with patch(
@@ -491,7 +491,7 @@ class TestFinal100(unittest.TestCase):
                 use_llm=True,
                 allow_fallback=True,
             )
-            self.assertEqual(ret_des_warn, 0)
+            self.assertEqual(ret_des_warn, 1)
 
     def test_engine_empty_dir_process_nodes_and_thread_exception(self):
         from pystdoc.engine import run_docgen
@@ -527,7 +527,8 @@ class TestFinal100(unittest.TestCase):
         )
         self.assertEqual(ret_static, 0)
 
-        # 5. LLM unreachable warning fallback (line 212)
+        # 5. LLM unreachable aborts without fallback even if
+        # allow_fallback=True
         with patch(
             "pystdoc.llm_client.LLMClient.check_availability",
             return_value=False,
@@ -538,7 +539,7 @@ class TestFinal100(unittest.TestCase):
                 use_llm=True,
                 allow_fallback=True,
             )
-            self.assertEqual(ret_warn, 0)
+            self.assertEqual(ret_warn, 1)
 
         # 6. Global variable referenced via callees (lines 516-520)
         (self.src_dir / "calc.c").write_text(

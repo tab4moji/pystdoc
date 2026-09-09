@@ -2,6 +2,7 @@
 
 import concurrent.futures
 import fcntl
+import json
 import re
 import sys
 import threading
@@ -10,7 +11,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from pystdoc.scanner import scan_files, write_files_list
-from pystdoc.hasher import compute_file_hash, compute_symbol_hash
+from pystdoc.hasher import (
+    compute_file_hash,
+    compute_symbol_hash,
+    compute_logic_hash,
+)
+
 from pystdoc.db import DocgenDB
 from pystdoc.compilation_db import CompilationDatabase
 from pystdoc.doc_writer import (
@@ -38,6 +44,7 @@ from pystdoc.progress import (
     PhaseProgressTracker,
     is_terminal,
 )
+from pystdoc.interrupt import InterruptionState
 from pystdoc.perf import PerfProfileManager
 
 
@@ -76,6 +83,43 @@ class FileLock:
             finally:
                 self.fd.close()
                 self.fd = None
+
+
+def is_trivial_internal_change(
+    old_cache: Optional[Dict[str, Any]],
+    old_meta: Optional[Dict[str, Any]],
+    new_sym: Any,
+) -> bool:
+    """Determine if a code change is a trivial internal change that does not
+    alter the external contract or require doc propagation.
+
+    Returns True if:
+    1. A valid cached doc (with purpose) exists.
+    2. The symbol kind is identical.
+    3. The signature (name, parameter list, return type) is identical.
+    4. The list of called functions (callees) is unchanged.
+    """
+    if not old_cache or not old_cache.get("purpose"):
+        return False
+
+    if old_meta:
+        if old_meta.get("kind") != new_sym.kind:
+            return False
+
+        old_sig = (old_meta.get("signature") or "").strip()
+        new_sig = (new_sym.signature or "").strip()
+        if old_sig and new_sig and old_sig != new_sig:
+            return False
+
+        try:
+            old_callees = set(json.loads(old_meta.get("callees_json") or "[]"))
+        except Exception:
+            old_callees = set()
+        new_callees = set(new_sym.callees or [])
+        if old_callees != new_callees:
+            return False
+
+    return True
 
 
 def check_external_interface_changed(
@@ -336,6 +380,22 @@ def generate_static_symbol_doc(sym, lang_norm: str) -> Dict[str, str]:
                 ),
             }
 
+    if "fn" in kind or "func" in kind or "method" in kind:
+        if is_ja:
+            return {
+                "purpose": f"`{sym.name}` の処理を実行する。",
+                "inputs": "パラメータ定義に従う。",
+                "outputs": f"`{sig_display}` の処理結果。",
+                "overview": f"`{sym.name}` の処理仕様およびモジュール内での役割。",
+            }
+        else:
+            return {
+                "purpose": f"Executes `{sym.name}` operations.",
+                "inputs": "According to parameter definitions.",
+                "outputs": f"Result `{sig_display}`.",
+                "overview": f"Basic specification and role for `{sym.name}`.",
+            }
+
     if is_ja:
         return {
             "purpose": f"`{sym.name}` ({sym.kind}) の機能定義。",
@@ -381,16 +441,17 @@ def run_docgen(
         )
         return 1
 
-    lock_path = target_dir / ".docgen" / ".lock"
-    with FileLock(lock_path):
-        header_msg = (
-            f"=== docgen Started (Workers: {concurrency}, "
-            f"Lang: {norm_lang}, SQLite index): {target_dir} ==="
-        )
-        print(header_msg, flush=True)
+    lock_path = target_dir / ".pystdoc" / ".lock"
+    try:
+        with FileLock(lock_path):
+            header_msg = (
+                f"=== docgen Started (Workers: {concurrency}, "
+                f"Lang: {norm_lang}, SQLite index): {target_dir} ==="
+            )
+            print(header_msg, flush=True)
 
-        db_path = target_dir / ".docgen" / "index.db"
-        db = DocgenDB(db_path)
+            db_path = target_dir / ".pystdoc" / "index.db"
+            db = DocgenDB(db_path)
 
         comp_db = CompilationDatabase(
             db_path=Path(
@@ -422,22 +483,14 @@ def run_docgen(
                     flush=True,
                 )
             else:
-                if not allow_fallback:
-                    print(
-                        f"Error: Failed to connect to LLM server "
-                        f"({client.base_url}). Aborting without "
-                        "--allow-fallback.",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    db.close()
-                    return 1
-                else:
-                    print(
-                        f"[LLM Warning] LLM server unreachable "
-                        f"({client.base_url}). Fallback to static templates.",
-                        flush=True,
-                    )
+                print(
+                    f"Error: Failed to connect to LLM server "
+                    f"({client.base_url}). Aborting.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                db.close()
+                return 1
 
         # 1. Scan files
         matched_files = scan_files(target_dir)
@@ -472,6 +525,10 @@ def run_docgen(
             flush=True,
         )
 
+        if not matched_files:
+            db.close()
+            return 0
+
         link_variables_to_functions(all_symbol_nodes)
 
         # 3. Pass 1: Level-by-Level DAG parallel processing
@@ -482,6 +539,8 @@ def run_docgen(
 
         # Collect initially changed or missing symbols
         dirty_symbol_ids: Set[str] = set()
+        trivial_changed_symbol_ids: Set[str] = set()
+        interface_changed_symbol_ids: Set[str] = set()
         node_snippets: Dict[str, str] = {}
         node_hashes: Dict[str, str] = {}
 
@@ -491,10 +550,21 @@ def run_docgen(
                 node.full_path, sym.line_start, sym.line_end
             )
             node_snippets[node.unique_id] = snippet
-            sym_hash = compute_symbol_hash(snippet, sym.signature, sym.doc)
-            node_hashes[node.unique_id] = sym_hash
+            lang_code = get_code_language(node.full_path.suffix)
+            sym_full_hash = compute_symbol_hash(
+                snippet, sym.signature, sym.doc
+            )
+            sym_logic_hash = compute_logic_hash(
+                snippet,
+                sym.signature,
+                lang=lang_code,
+                ast_node=sym.ast_node,
+            )
+            node_hashes[node.unique_id] = sym_full_hash
+            sym.full_hash = sym_full_hash
+            sym.logic_hash = sym_logic_hash
 
-            docgen_docs_dir = target_dir / ".docgen" / "documents"
+            docgen_docs_dir = target_dir / ".pystdoc" / "documents"
             expected_file_doc = (
                 docgen_docs_dir / f"{node.rel_path.as_posix()}.md"
             )
@@ -504,25 +574,46 @@ def run_docgen(
             )
 
             cache_key = f"{node.unique_id}::{norm_lang}"
-            has_cache = (
-                db.load_symbol_cache(cache_key) is not None
-                or db.load_symbol_cache(node.unique_id) is not None
+            old_meta = db.load_symbol_metadata(node.unique_id)
+            old_cache = (
+                db.load_symbol_cache(cache_key)
+                or db.load_symbol_cache(node.unique_id)
             )
+            has_cache = old_cache is not None
             doc_file_missing = (
                 not has_cache
                 or not expected_file_doc.exists()
                 or not sym_file_exists
             )
 
-            is_sym_changed = db.update_symbol_hash(
-                node.unique_id, node.rel_path.as_posix(), sym_hash
+            is_full_changed, is_logic_changed = db.update_symbol_hash(
+                node.unique_id,
+                node.rel_path.as_posix(),
+                sym_full_hash,
+                sym_logic_hash,
             )
             db.save_symbol_metadata(
                 node.unique_id, sym, node.rel_path.as_posix()
             )
 
-            if force or is_sym_changed or doc_file_missing:
+            is_trivial = False
+            if (
+                (is_logic_changed or is_full_changed)
+                and not force
+                and not doc_file_missing
+            ):
+                is_trivial = is_trivial_internal_change(
+                    old_cache, old_meta, sym
+                )
+
+            if (
+                force
+                or doc_file_missing
+                or (is_logic_changed and not is_trivial)
+            ):
                 dirty_symbol_ids.add(node.unique_id)
+            elif is_logic_changed and is_trivial:
+                trivial_changed_symbol_ids.add(node.unique_id)
 
         perf_mgr = PerfProfileManager.get_instance()
         host_str = llm_client.base_url if llm_client else None
@@ -574,6 +665,7 @@ def run_docgen(
         tracker.set_remaining_estimate(get_current_eta())
 
         def process_single_node(node: SymbolNode) -> None:
+            InterruptionState.check_interrupted()
             nonlocal remaining_est_total
             sym = node.symbol
             rel_path = node.rel_path
@@ -663,8 +755,10 @@ def run_docgen(
                     has_external_change = check_external_interface_changed(
                         old_cache, sym
                     )
-                    if has_external_change and node.direct_caller_ids:
-                        dirty_symbol_ids.update(node.direct_caller_ids)
+                    if has_external_change:
+                        interface_changed_symbol_ids.add(node.unique_id)
+                        if node.direct_caller_ids:
+                            dirty_symbol_ids.update(node.direct_caller_ids)
 
                 with rem_lock:
                     remaining_est_total = max(
@@ -761,8 +855,10 @@ def run_docgen(
                     has_external_change = check_external_interface_changed(
                         old_cache, sym
                     )
-                    if has_external_change and node.direct_caller_ids:
-                        dirty_symbol_ids.update(node.direct_caller_ids)
+                    if has_external_change:
+                        interface_changed_symbol_ids.add(node.unique_id)
+                        if node.direct_caller_ids:
+                            dirty_symbol_ids.update(node.direct_caller_ids)
 
                 with rem_lock:
                     remaining_est_total = max(
@@ -778,6 +874,22 @@ def run_docgen(
                     est_remaining=curr_eta,
                 )
             else:
+                static_doc = generate_static_symbol_doc(sym, norm_lang)
+                sym.purpose = static_doc["purpose"]
+                sym.inputs_note = static_doc["inputs"]
+                sym.outputs_note = static_doc["outputs"]
+                sym.overview = static_doc["overview"]
+
+                save_payload = {
+                    "purpose": sym.purpose,
+                    "inputs_note": sym.inputs_note,
+                    "outputs_note": sym.outputs_note,
+                    "overview": sym.overview,
+                    "top_down_context": sym.top_down_context,
+                }
+                db.save_symbol_cache(cache_key, save_payload)
+                db.save_symbol_cache(node.unique_id, save_payload)
+
                 with rem_lock:
                     remaining_est_total = max(
                         0.0,
@@ -791,31 +903,56 @@ def run_docgen(
                     est_remaining=curr_eta,
                 )
 
-            write_single_symbol_doc(
-                target_dir,
-                rel_path,
-                sym,
-                prefix_name=prefix_in_unique_id,
-                language=norm_lang,
-                symbol_id_override=raw_id if raw_id else None,
+            candidate_files = get_candidate_doc_filenames(node)
+            doc_exists = any(
+                (target_dir / ".pystdoc" / "documents" / fn).exists()
+                for fn in candidate_files
             )
+            if (
+                is_dirty
+                or force
+                or not doc_exists
+                or node.unique_id in trivial_changed_symbol_ids
+            ):
+                write_single_symbol_doc(
+                    target_dir,
+                    rel_path,
+                    sym,
+                    prefix_name=prefix_in_unique_id,
+                    language=norm_lang,
+                    symbol_id_override=raw_id if raw_id else None,
+                )
 
         # Process Level by Level
         for lvl_idx, lvl_nodes in enumerate(level_groups):
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=concurrency
-            ) as executor:
+            InterruptionState.check_interrupted()
+            executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=concurrency,
+                thread_name_prefix="pystdoc-pass1",
+            )
+            try:
                 futures = [
                     executor.submit(process_single_node, node)
                     for node in lvl_nodes
                 ]
                 for f in concurrent.futures.as_completed(futures):
+                    InterruptionState.check_interrupted()
                     try:
                         f.result()
+                    except KeyboardInterrupt:
+                        InterruptionState.set_interrupted()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        raise
                     except Exception as e:
+                        executor.shutdown(wait=False, cancel_futures=True)
                         print(f"\nError: {e}", file=sys.stderr, flush=True)
                         db.close()
                         return 1
+            except KeyboardInterrupt:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
         tracker.finish()
 
@@ -877,6 +1014,7 @@ def run_docgen(
         var_tracker.set_remaining_estimate(get_var_eta())
 
         def process_var_node(v_node: SymbolNode) -> None:
+            InterruptionState.check_interrupted()
             nonlocal var_remaining_est_total
             v_sym = v_node.symbol
             v_rel = v_node.rel_path
@@ -940,32 +1078,33 @@ def run_docgen(
                             }
                         )
 
-            v_docgen_docs_dir = target_dir / ".docgen" / "documents"
+            v_docgen_docs_dir = target_dir / ".pystdoc" / "documents"
             v_candidates = get_candidate_doc_filenames(v_node)
             v_doc_missing = not any(
                 (v_docgen_docs_dir / fn).exists() for fn in v_candidates
             )
 
-            # Check if this node is downstream of any updated symbols
-            is_self_updated = (
-                v_node.unique_id in actually_updated_symbol_ids
+            # Check if this node is downstream of interface-changed symbols
+            changed_upstream_ids = (
+                interface_changed_symbol_ids | dirty_symbol_ids
             )
+            is_self_updated = v_node.unique_id in changed_upstream_ids
             is_parent_container_updated = (
                 parent_container_info is not None
                 and any(
                     t.symbol.name == parent_container_info["name"]
-                    and t.unique_id in actually_updated_symbol_ids
+                    and t.unique_id in changed_upstream_ids
                     for t in type_nodes
                     if t.rel_path == v_rel
                 )
             )
             is_parent_func_updated = (
                 any(
-                    caller_id in actually_updated_symbol_ids
+                    caller_id in changed_upstream_ids
                     for caller_id in v_node.direct_caller_ids
                 )
                 or any(
-                    f_node.unique_id in actually_updated_symbol_ids
+                    f_node.unique_id in changed_upstream_ids
                     for f_node in fn_nodes
                     if f_node.rel_path == v_rel
                     and (
@@ -988,7 +1127,7 @@ def run_docgen(
                 and (parent_funcs or parent_container_info)
                 and (
                     force
-                    or (bool(actually_updated_symbol_ids) and is_downstream)
+                    or (bool(changed_upstream_ids) and is_downstream)
                     or not v_sym.top_down_context
                 )
             )
@@ -1110,19 +1249,33 @@ def run_docgen(
                     )
 
         if var_nodes:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=concurrency
-            ) as executor:
+            InterruptionState.check_interrupted()
+            executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=concurrency,
+                thread_name_prefix="pystdoc-pass2",
+            )
+            try:
                 futures = [
                     executor.submit(process_var_node, v) for v in var_nodes
                 ]
                 for f in concurrent.futures.as_completed(futures):
+                    InterruptionState.check_interrupted()
                     try:
                         f.result()
+                    except KeyboardInterrupt:
+                        InterruptionState.set_interrupted()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        raise
                     except Exception as e:
+                        executor.shutdown(wait=False, cancel_futures=True)
                         print(f"\nError: {e}", file=sys.stderr, flush=True)
                         db.close()
                         return 1
+            except KeyboardInterrupt:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
         var_tracker.finish()
 
@@ -1149,17 +1302,38 @@ def run_docgen(
                     n.symbol.referencing_functions = caller_info_list
 
         total_individual_docs = 0
+        docgen_docs_dir = target_dir / ".pystdoc" / "documents"
         for rel_path in matched_files:
             symbols = file_symbols[rel_path]
             current_hash = file_hashes[rel_path]
-
-            write_symbol_doc(
-                target_dir, rel_path, current_hash, symbols, language=norm_lang
+            expected_file_doc = docgen_docs_dir / f"{rel_path.as_posix()}.md"
+            file_has_dirty = any(
+                n.unique_id in actually_updated_symbol_ids
+                or n.unique_id in dirty_symbol_ids
+                for n in all_symbol_nodes
+                if n.rel_path == rel_path
             )
-            ind_docs = write_individual_symbol_docs(
-                target_dir, rel_path, symbols, language=norm_lang
-            )
-            total_individual_docs += len(ind_docs)
+            if force or not expected_file_doc.exists() or file_has_dirty:
+                write_symbol_doc(
+                    target_dir,
+                    rel_path,
+                    current_hash,
+                    symbols,
+                    language=norm_lang,
+                )
+                ind_docs = write_individual_symbol_docs(
+                    target_dir, rel_path, symbols, language=norm_lang
+                )
+                total_individual_docs += len(ind_docs)
+            else:
+                # Count symbols for reporting
+                def count_syms(sym_list):
+                    cnt = len(sym_list)
+                    for s in sym_list:
+                        if s.children:
+                            cnt += count_syms(s.children)
+                    return cnt
+                total_individual_docs += count_syms(symbols)
 
         db.close()
         summary_msg = (
@@ -1168,4 +1342,27 @@ def run_docgen(
         )
         print(summary_msg, flush=True)
         print("=== docgen Finished ===", flush=True)
-    return 0
+        return 0
+    except KeyboardInterrupt:
+        InterruptionState.set_interrupted()
+        if "tracker" in locals():
+            try:
+                tracker.finish()
+            except Exception:
+                pass
+        if "var_tracker" in locals():
+            try:
+                var_tracker.finish()
+            except Exception:
+                pass
+        if "db" in locals() and db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+        print(
+            "\n[Interrupted] docgen aborted safely by user (Ctrl-C or 'q').",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 130

@@ -1,7 +1,10 @@
-"""Performance profiler and 3rd-order polynomial regression estimator.
+"""Performance profiler and regression estimator with streaming tracking.
 
-Models LLM generation time: t = a0 + a1 * x^1 + a2 * x^2 + a3 * x^3
-where x is line count, categorized by (host, model, gen_type, symbol_kind).
+Models LLM generation time and output volume:
+- Duration: t = a0 + a1 * z^1 + a2 * z^2 + a3 * z^3
+- Output Chars: chars = b0 + b1 * z^1 + b2 * z^2
+where z = line_count * sqrt(complexity), categorized by
+(host, model, gen_type, symbol_kind).
 Persisted under ~/.config/pystdoc/perf_metrics.json.
 """
 
@@ -57,8 +60,8 @@ def fit_polynomial_regression(
 ) -> List[float]:
     """Fit a polynomial of given degree: t = a0 + a1*x + a2*x^2 + a3*x^3.
 
-    Samples: list of (line_count x, elapsed_time t).
-    Returns list of coefficients [a0, a1, a2, a3].
+    Samples: list of (input_size z, target_value y).
+    Returns list of coefficients [a0, a1, ...].
     """
     if not samples:
         return [0.8, 0.02, 0.0, 0.0]
@@ -67,7 +70,7 @@ def fit_polynomial_regression(
     if len(samples) == 1:
         x, t = samples[0]
         a0 = max(0.1, t)
-        return [a0, 0.0, 0.0, 0.0]
+        return [a0] + [0.0] * degree
 
     max_power = 2 * degree
     s = [0.0] * (max_power + 1)
@@ -99,7 +102,7 @@ def fit_polynomial_regression(
 
 
 def evaluate_polynomial(coeffs: List[float], x: float) -> float:
-    """Evaluate t = a0 + a1*x + a2*x^2 + a3*x^3 with safety bounds."""
+    """Evaluate polynomial with safety bounds."""
     x_val = max(1.0, float(x))
     res = 0.0
     cur_x = 1.0
@@ -185,37 +188,57 @@ class PerfProfileManager:
         symbol_kind: Optional[str],
         line_count: int,
         elapsed_seconds: float,
+        output_chars: Optional[int] = None,
+        complexity: Optional[float] = None,
     ) -> None:
-        """Record an execution measurement and update regression."""
+        """Record an execution measurement and update regressions."""
         key = self._get_key(host, model)
         cat_key = self._get_category_key(gen_type, symbol_kind)
         x_lines = max(1, int(line_count))
+        c_val = max(1.0, float(complexity if complexity is not None else 1.0))
+        z_work = x_lines * (c_val ** 0.5)
         t_sec = max(0.01, float(elapsed_seconds))
+        chars_cnt = int(output_chars) if output_chars is not None else None
 
         with self.lock:
             if key not in self.data:
                 self.data[key] = {"categories": {}}
 
             cat_dict = self.data[key]["categories"].setdefault(
-                cat_key, {"samples": [], "coeffs": []}
+                cat_key, {"samples": [], "coeffs": [], "chars_coeffs": []}
             )
             samples = cat_dict.setdefault("samples", [])
-            samples.append(
-                {
-                    "x": x_lines,
-                    "t": round(t_sec, 3),
-                    "timestamp": round(time.time(), 1),
-                }
-            )
+            sample_entry: Dict[str, Any] = {
+                "x": x_lines,
+                "c": round(c_val, 2),
+                "z": round(z_work, 2),
+                "t": round(t_sec, 3),
+                "timestamp": round(time.time(), 1),
+            }
+            if chars_cnt is not None:
+                sample_entry["chars"] = chars_cnt
+            samples.append(sample_entry)
 
             if len(samples) > 100:
                 samples = samples[-100:]
                 cat_dict["samples"] = samples
 
-            sample_pairs = [(s["x"], s["t"]) for s in samples]
+            sample_pairs = [
+                (s.get("z", s["x"]), s["t"]) for s in samples
+            ]
             cat_dict["coeffs"] = fit_polynomial_regression(
                 sample_pairs, degree=3
             )
+
+            chars_samples = [
+                (s.get("z", s["x"]), float(s["chars"]))
+                for s in samples
+                if "chars" in s
+            ]
+            if chars_samples:
+                cat_dict["chars_coeffs"] = fit_polynomial_regression(
+                    chars_samples, degree=2
+                )
 
         self.save()
 
@@ -226,11 +249,14 @@ class PerfProfileManager:
         gen_type: str,
         symbol_kind: Optional[str],
         line_count: int,
+        complexity: float = 1.0,
     ) -> float:
         """Predict expected execution duration in seconds using regression."""
         key = self._get_key(host, model)
         cat_key = self._get_category_key(gen_type, symbol_kind)
         x_lines = max(1, int(line_count))
+        c_val = max(1.0, float(complexity))
+        z_work = x_lines * (c_val ** 0.5)
 
         with self.lock:
             cat_data = (
@@ -248,4 +274,62 @@ class PerfProfileManager:
             if not coeffs:
                 coeffs = [0.8, 0.03, 0.0, 0.0]
 
-        return evaluate_polynomial(coeffs, x_lines)
+        return evaluate_polynomial(coeffs, z_work)
+
+    def predict_output_chars(
+        self,
+        host: Optional[str],
+        model: Optional[str],
+        gen_type: str,
+        symbol_kind: Optional[str],
+        line_count: int,
+        complexity: float = 1.0,
+    ) -> int:
+        """Predict expected output characters from lines and complexity."""
+        key = self._get_key(host, model)
+        cat_key = self._get_category_key(gen_type, symbol_kind)
+        x_lines = max(1, int(line_count))
+        c_val = max(1.0, float(complexity))
+        z_work = x_lines * (c_val ** 0.5)
+        k = (symbol_kind or "general").lower().strip()
+
+        with self.lock:
+            cat_data = (
+                self.data.get(key, {}).get("categories", {}).get(cat_key, {})
+            )
+            chars_coeffs = cat_data.get("chars_coeffs")
+            if not chars_coeffs:
+                all_cats = self.data.get(key, {}).get("categories", {})
+                for c_k, c_v in all_cats.items():
+                    if c_v.get("chars_coeffs"):
+                        chars_coeffs = c_v["chars_coeffs"]
+                        break
+
+            if chars_coeffs:
+                pred = evaluate_polynomial(chars_coeffs, z_work)
+                return max(150, int(round(pred)))
+
+        # Default heuristic based on symbol kind & complexity
+        if k in (
+            "function", "async_function", "method",
+            "constructor", "destructor", "fn"
+        ):
+            base = 400 + int(round(5 * x_lines + 15 * c_val))
+        elif k in ("type", "struct", "class", "data_models", "interface"):
+            base = 550 + int(round(7 * x_lines + 20 * c_val))
+        elif k in (
+            "var", "variable", "field", "const", "enum_constant", "property"
+        ):
+            base = 320 + int(round(3 * x_lines + 10 * c_val))
+        elif k in ("module_doc", "modules"):
+            base = 850 + int(round(8 * x_lines + 25 * c_val))
+        elif k == "overview":
+            base = 1200 + int(round(12 * x_lines + 35 * c_val))
+        elif k == "readme":
+            base = 1600 + int(round(15 * x_lines + 40 * c_val))
+        elif k == "execution_model":
+            base = 1100 + int(round(10 * x_lines + 30 * c_val))
+        else:
+            base = 450 + int(round(6 * x_lines + 18 * c_val))
+
+        return max(150, base)

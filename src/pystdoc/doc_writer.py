@@ -268,8 +268,8 @@ def write_single_symbol_doc(
 ) -> Path:
     """Write an individual symbol document with immediate flush."""
     norm_lang = normalize_language(language)
-    docgen_dir = target_dir / ".docgen" / "documents"
-    docgen_dir.mkdir(parents=True, exist_ok=True)
+    pystdoc_dir = target_dir / ".pystdoc" / "documents"
+    pystdoc_dir.mkdir(parents=True, exist_ok=True)
 
     k_prefix = get_kind_prefix(symbol.kind)
     sym_id = (
@@ -277,7 +277,7 @@ def write_single_symbol_doc(
         if symbol_id_override
         else (f"{prefix_name}{symbol.name}" if prefix_name else symbol.name)
     )
-    out_file = docgen_dir / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.md"
+    out_file = pystdoc_dir / f"{rel_path.as_posix()}.{k_prefix}.{sym_id}.md"
 
     full_path = target_dir / rel_path
     content = format_symbol_section(
@@ -334,10 +334,10 @@ def write_symbol_doc(
 ) -> Path:
     """Write comprehensive file documentation with immediate flush."""
     norm_lang = normalize_language(language)
-    docgen_dir = target_dir / ".docgen" / "documents"
-    docgen_dir.mkdir(parents=True, exist_ok=True)
+    pystdoc_dir = target_dir / ".pystdoc" / "documents"
+    pystdoc_dir.mkdir(parents=True, exist_ok=True)
 
-    out_file = docgen_dir / f"{rel_path.as_posix()}.md"
+    out_file = pystdoc_dir / f"{rel_path.as_posix()}.md"
     full_path = target_dir / rel_path
 
     lines = [

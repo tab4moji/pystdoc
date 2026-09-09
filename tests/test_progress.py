@@ -16,7 +16,20 @@ from pystdoc.progress import (
     format_eta,
     format_progress_line,
     PhaseProgressTracker,
+    get_display_width,
+    truncate_display_width,
 )
+
+
+def test_display_width_and_truncate():
+    assert get_display_width("abc") == 3
+    assert get_display_width("日本語") == 6
+    assert get_display_width("\r\n\b\033") == 0
+
+    assert truncate_display_width("hello world", 5) == "he..."
+    assert truncate_display_width("日本語テスト", 6) == "日..."
+    assert truncate_display_width("abc", 10) == "abc"
+    assert truncate_display_width("abc", 0) == ""
 
 
 def test_is_terminal():
@@ -188,9 +201,15 @@ def test_phase_progress_tracker():
     assert "sym1" in l1
     assert "\r" in stream.getvalue()
 
-    cur = tracker.render_current(extra="sym1_current", est_remaining=20.0)
+    cur = tracker.render_current(
+        extra="sym1_current_very_long_extra_string", est_remaining=20.0
+    )
     assert "1/5 ( 20.0%)" in cur
-    assert "sym1_current" in cur
+
+    # Next render is shorter, triggering BS padding
+    cur_short = tracker.render_current(extra="short", est_remaining=20.0)
+    assert "short" in cur_short
+    assert "\b" in stream.getvalue()
 
     tracker.advance(10, extra="done")
     assert tracker.current == 5
@@ -217,7 +236,7 @@ def test_phase_progress_tracker():
 
 
 def test_design_engine_cached_without_tracker(tmp_path: Path):
-    docgen_dir = tmp_path / ".docgen"
+    docgen_dir = tmp_path / ".pystdoc"
     design_dir = docgen_dir / "design"
     design_dir.mkdir(parents=True)
     db = DocgenDB(docgen_dir / "index.db")

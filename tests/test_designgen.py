@@ -18,7 +18,7 @@ from pystdoc.design_engine import (
 class TestDesigngen(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path(tempfile.mkdtemp())
-        self.docs_dir = self.test_dir / ".docgen" / "documents"
+        self.docs_dir = self.test_dir / ".pystdoc" / "documents"
         self.docs_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -99,7 +99,7 @@ class TestDesigngen(unittest.TestCase):
             language="English",
         )
         self.assertEqual(res2, 0)
-        design_dir = self.test_dir / ".docgen" / "design"
+        design_dir = self.test_dir / ".pystdoc" / "design"
         self.assertTrue((design_dir / "data_models.md").exists())
         self.assertTrue((design_dir / "execution_model.md").exists())
         self.assertTrue((design_dir / "overview.md").exists())
@@ -124,7 +124,7 @@ class TestDesigngen(unittest.TestCase):
             language="English",
         )
         self.assertEqual(res1, 0)
-        overview_file = self.test_dir / ".docgen" / "design" / "overview.md"
+        overview_file = self.test_dir / ".pystdoc" / "design" / "overview.md"
         self.assertTrue(overview_file.exists())
 
         # Delete overview.md

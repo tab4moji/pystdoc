@@ -39,17 +39,28 @@ class PythonSymbolVisitor(ast.NodeVisitor):
         callee_visitor = CalleeVisitor()
         callee_visitor.visit(node)
 
+        param_strs = []
+        for p in params:
+            if p.type_hint:
+                param_strs.append(f"{p.name}: {p.type_hint}")
+            else:
+                param_strs.append(p.name)
+        ret_str = f" -> {return_type}" if return_type else ""
+        async_prefix = "async " if is_async else ""
+        sig_str = f"{async_prefix}def {name}({', '.join(param_strs)}){ret_str}"
+
         sym = Symbol(
             name=name,
             kind="async_function" if is_async else "function",
             line_start=line_start,
             line_end=line_end,
             fqdn=fqdn,
-            signature=f"def {name}(...)",
+            signature=sig_str,
             doc=docstring,
             parameters=params,
             return_type=return_type,
             callees=sorted(list(callee_visitor.callees)),
+            ast_node=node,
         )
         self.symbols.append(sym)
 
@@ -77,6 +88,7 @@ class PythonSymbolVisitor(ast.NodeVisitor):
             signature=f"class {name}",
             doc=docstring,
             children=child_visitor.symbols,
+            ast_node=node,
         )
         self.symbols.append(sym)
 

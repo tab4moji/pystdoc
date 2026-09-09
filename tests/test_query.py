@@ -20,8 +20,8 @@ from pystdoc.symbols import Symbol
 
 @pytest.fixture
 def sample_docgen_dir(tmp_path):
-    """Setup a mock .docgen structure with DB and markdown docs."""
-    docgen = tmp_path / ".docgen"
+    """Setup a mock .pystdoc structure with DB and markdown docs."""
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     docs_dir = docgen / "documents"
     docs_dir.mkdir(parents=True)
@@ -129,11 +129,11 @@ def test_run_list_missing_docgen(tmp_path, capsys):
     ret = run_list(tmp_path)
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: .docgen directory not found" in err
+    assert "Error: .pystdoc directory not found" in err
 
 
 def test_run_list_db_fallback(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir()
     db_path = docgen / "index.db"
     with DocgenDB(db_path) as db:
@@ -146,7 +146,7 @@ def test_run_list_db_fallback(tmp_path, capsys):
 
 
 def test_run_list_docs_fallback(tmp_path, capsys):
-    docgen = tmp_path / ".docgen" / "documents"
+    docgen = tmp_path / ".pystdoc" / "documents"
     docgen.mkdir(parents=True)
     (docgen / "src_test.c.md").write_text("dummy", encoding="utf-8")
 
@@ -157,11 +157,11 @@ def test_run_list_docs_fallback(tmp_path, capsys):
 
 
 def test_run_list_empty(tmp_path, capsys):
-    (tmp_path / ".docgen").mkdir()
+    (tmp_path / ".pystdoc").mkdir()
     ret = run_list(tmp_path)
     assert ret == 0
     out = capsys.readouterr().out
-    assert "No source files found in .docgen." in out
+    assert "No source files found in .pystdoc." in out
 
 
 def test_run_functions_normal(sample_docgen_dir, capsys):
@@ -176,11 +176,11 @@ def test_run_functions_missing_docgen(tmp_path, capsys):
     ret = run_functions(tmp_path)
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: .docgen directory not found" in err
+    assert "Error: .pystdoc directory not found" in err
 
 
 def test_run_functions_docs_fallback(tmp_path, capsys):
-    docgen = tmp_path / ".docgen" / "documents"
+    docgen = tmp_path / ".pystdoc" / "documents"
     docgen.mkdir(parents=True)
     (docgen / "test.c.fn.calc_sum.md").write_text("dummy", encoding="utf-8")
 
@@ -191,11 +191,11 @@ def test_run_functions_docs_fallback(tmp_path, capsys):
 
 
 def test_run_functions_empty(tmp_path, capsys):
-    (tmp_path / ".docgen").mkdir()
+    (tmp_path / ".pystdoc").mkdir()
     ret = run_functions(tmp_path)
     assert ret == 0
     out = capsys.readouterr().out
-    assert "No functions found in .docgen." in out
+    assert "No functions found in .pystdoc." in out
 
 
 def test_run_variables_normal(sample_docgen_dir, capsys):
@@ -210,11 +210,11 @@ def test_run_variables_missing_docgen(tmp_path, capsys):
     ret = run_variables(tmp_path)
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: .docgen directory not found" in err
+    assert "Error: .pystdoc directory not found" in err
 
 
 def test_run_variables_docs_fallback(tmp_path, capsys):
-    docgen = tmp_path / ".docgen" / "documents"
+    docgen = tmp_path / ".pystdoc" / "documents"
     docgen.mkdir(parents=True)
     (docgen / "test.c.var.g_state.md").write_text("dummy", encoding="utf-8")
     (docgen / "test.c.const.MAX_VAL.md").write_text("dummy", encoding="utf-8")
@@ -227,11 +227,11 @@ def test_run_variables_docs_fallback(tmp_path, capsys):
 
 
 def test_run_variables_empty(tmp_path, capsys):
-    (tmp_path / ".docgen").mkdir()
+    (tmp_path / ".pystdoc").mkdir()
     ret = run_variables(tmp_path)
     assert ret == 0
     out = capsys.readouterr().out
-    assert "No variables or constants found in .docgen." in out
+    assert "No variables or constants found in .pystdoc." in out
 
 
 def test_run_description_exact_and_colon(sample_docgen_dir, capsys):
@@ -269,18 +269,18 @@ def test_run_description_missing_docgen(tmp_path, capsys):
     ret = run_description(tmp_path, "main")
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: .docgen directory not found" in err
+    assert "Error: .pystdoc directory not found" in err
 
 
 def test_run_description_not_found(sample_docgen_dir, capsys):
     ret = run_description(sample_docgen_dir, "non_existent_symbol")
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: Symbol 'non_existent_symbol' not found in .docgen." in err
+    assert "Error: Symbol 'non_existent_symbol' not found in .pystdoc." in err
 
 
 def test_db_find_symbols_suffix_and_substring(sample_docgen_dir):
-    db_path = sample_docgen_dir / ".docgen" / "index.db"
+    db_path = sample_docgen_dir / ".pystdoc" / "index.db"
     with DocgenDB(db_path) as db:
         # 1. Suffix match (query="calc" matches fqdn "pkg.module.calc")
         db.save_symbol_metadata(
@@ -300,7 +300,7 @@ def test_db_find_symbols_suffix_and_substring(sample_docgen_dir):
 
 
 def test_query_exceptions_and_edge_cases(tmp_path, capsys, monkeypatch):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir()
     docs_dir = docgen / "documents"
     docs_dir.mkdir()
@@ -334,7 +334,7 @@ def test_query_exceptions_and_edge_cases(tmp_path, capsys, monkeypatch):
 
 
 def test_description_multiple_symbols_and_formats(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir()
     docs_dir = docgen / "documents"
     docs_dir.mkdir()
@@ -448,7 +448,7 @@ def test_find_markdown_doc_missing_dir(tmp_path):
 
 
 def test_query_additional_coverage_branches(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir()
     db_path = docgen / "index.db"
 
@@ -513,7 +513,7 @@ def test_query_additional_coverage_branches(tmp_path, capsys):
 
 
 def test_find_markdown_doc_nested_fqdn(tmp_path):
-    docs_dir = tmp_path / ".docgen" / "documents"
+    docs_dir = tmp_path / ".pystdoc" / "documents"
     docs_dir.mkdir(parents=True)
     # Create file matching tail parts
     target_md = docs_dir / "src/Main.kt.type.Model.prop.md"
@@ -541,11 +541,11 @@ def test_run_types_missing_docgen(tmp_path, capsys):
     ret = run_types(tmp_path)
     assert ret == 1
     err = capsys.readouterr().err
-    assert "Error: .docgen directory not found" in err
+    assert "Error: .pystdoc directory not found" in err
 
 
 def test_run_types_fallback_documents(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docs_dir = docgen / "documents"
     docs_dir.mkdir(parents=True)
 
@@ -560,27 +560,27 @@ def test_run_types_fallback_documents(tmp_path, capsys):
 
 
 def test_run_types_empty(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     ret = run_types(tmp_path)
     assert ret == 0
     out = capsys.readouterr().out
-    assert "No types or classes found in .docgen." in out
+    assert "No types or classes found in .pystdoc." in out
 
 
 def test_run_types_db_corrupt_fallback(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     # create invalid DB file
     (docgen / "index.db").write_text("not a sqlite db", encoding="utf-8")
     ret = run_types(tmp_path)
     assert ret == 0
     out = capsys.readouterr().out
-    assert "No types or classes found in .docgen." in out
+    assert "No types or classes found in .pystdoc." in out
 
 
 def test_run_types_formatting_variations(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     db_path = docgen / "index.db"
     with DocgenDB(db_path) as db:
@@ -623,20 +623,20 @@ def test_locate_features_errors(tmp_path):
     # Empty query
     assert "Please provide" in locate_features(tmp_path, "   ")
 
-    # No .docgen dir
-    assert ".docgen directory not found" in locate_features(
+    # No .pystdoc dir
+    assert ".pystdoc directory not found" in locate_features(
         tmp_path, "some query"
     )
 
     # No index.db
-    (tmp_path / ".docgen").mkdir(parents=True)
-    assert "index database (.docgen/index.db) not found" in locate_features(
+    (tmp_path / ".pystdoc").mkdir(parents=True)
+    assert "index database (.pystdoc/index.db) not found" in locate_features(
         tmp_path, "some query"
     )
 
 
 def test_locate_features_full(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     db_path = docgen / "index.db"
 
@@ -740,18 +740,18 @@ def test_trace_impact_errors(tmp_path):
     # Empty symbol
     assert "Please specify" in trace_impact(tmp_path, "   ")
 
-    # No .docgen dir
-    assert ".docgen directory not found" in trace_impact(tmp_path, "MySymbol")
+    # No .pystdoc dir
+    assert ".pystdoc directory not found" in trace_impact(tmp_path, "MySymbol")
 
     # No index.db
-    (tmp_path / ".docgen").mkdir(parents=True)
-    assert "index database (.docgen/index.db) not found" in trace_impact(
+    (tmp_path / ".pystdoc").mkdir(parents=True)
+    assert "index database (.pystdoc/index.db) not found" in trace_impact(
         tmp_path, "MySymbol"
     )
 
 
 def test_trace_impact_full(tmp_path, capsys):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     db_path = docgen / "index.db"
 
@@ -819,7 +819,7 @@ def test_trace_impact_full(tmp_path, capsys):
 
 
 def test_locate_and_trace_coverage_branches(tmp_path):
-    docgen = tmp_path / ".docgen"
+    docgen = tmp_path / ".pystdoc"
     docgen.mkdir(parents=True)
     db_path = docgen / "index.db"
 

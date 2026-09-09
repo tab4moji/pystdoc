@@ -1,4 +1,4 @@
-"""Query utilities for inspecting .docgen documentation index."""
+"""Query utilities for inspecting .pystdoc documentation index."""
 
 import json
 import sys
@@ -10,16 +10,16 @@ from pystdoc.symbols import get_kind_prefix
 
 
 def _get_docgen_dir(target_dir: Path) -> Path:
-    """Return .docgen directory path."""
-    return target_dir / ".docgen"
+    """Return .pystdoc directory path."""
+    return target_dir / ".pystdoc"
 
 
 def run_list(target_dir: Path) -> int:
-    """List all indexed source files from .docgen."""
+    """List all indexed source files from .pystdoc."""
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         print(
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run 'pystdoc sync' first.",
             file=sys.stderr,
         )
@@ -56,7 +56,7 @@ def run_list(target_dir: Path) -> int:
                     files.append(p.stem)
 
     if not files:
-        print("No source files found in .docgen.")
+        print("No source files found in .pystdoc.")
         return 0
 
     for f in sorted(list(dict.fromkeys(files))):
@@ -65,11 +65,11 @@ def run_list(target_dir: Path) -> int:
 
 
 def run_functions(target_dir: Path) -> int:
-    """List all indexed functions and methods from .docgen."""
+    """List all indexed functions and methods from .pystdoc."""
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         print(
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run 'pystdoc sync' first.",
             file=sys.stderr,
         )
@@ -103,7 +103,7 @@ def run_functions(target_dir: Path) -> int:
                 symbols.append({"name": name, "fqdn": name, "rel_path": ""})
 
     if not symbols:
-        print("No functions found in .docgen.")
+        print("No functions found in .pystdoc.")
         return 0
 
     for s in symbols:
@@ -123,11 +123,11 @@ def run_functions(target_dir: Path) -> int:
 
 
 def run_variables(target_dir: Path) -> int:
-    """List all indexed variables and constants from .docgen."""
+    """List all indexed variables and constants from .pystdoc."""
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         print(
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run 'pystdoc sync' first.",
             file=sys.stderr,
         )
@@ -170,7 +170,7 @@ def run_variables(target_dir: Path) -> int:
                 symbols.append({"name": name, "fqdn": name, "rel_path": ""})
 
     if not symbols:
-        print("No variables or constants found in .docgen.")
+        print("No variables or constants found in .pystdoc.")
         return 0
 
     for s in symbols:
@@ -190,11 +190,11 @@ def run_variables(target_dir: Path) -> int:
 
 
 def run_types(target_dir: Path) -> int:
-    """List all indexed types, classes, structs, enums from .docgen."""
+    """List all indexed types, classes, structs, enums from .pystdoc."""
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         print(
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run 'pystdoc sync' first.",
             file=sys.stderr,
         )
@@ -237,7 +237,7 @@ def run_types(target_dir: Path) -> int:
                 symbols.append({"name": name, "fqdn": name, "rel_path": ""})
 
     if not symbols:
-        print("No types or classes found in .docgen.")
+        print("No types or classes found in .pystdoc.")
         return 0
 
     for s in symbols:
@@ -311,7 +311,7 @@ def run_description(target_dir: Path, query: str) -> int:
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         print(
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run 'pystdoc sync' first.",
             file=sys.stderr,
         )
@@ -355,7 +355,7 @@ def run_description(target_dir: Path, query: str) -> int:
 
     if not symbols:
         print(
-            f"Error: Symbol '{clean_query}' not found in .docgen.",
+            f"Error: Symbol '{clean_query}' not found in .pystdoc.",
             file=sys.stderr,
         )
         return 1
@@ -421,13 +421,13 @@ def locate_features(target_dir: Path, query: str, limit: int = 10) -> str:
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         return (
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run pystdoc_sync first."
         )
 
     db_path = docgen_dir / "index.db"
     if not db_path.exists():
-        return "Error: index database (.docgen/index.db) not found."
+        return "Error: index database (.pystdoc/index.db) not found."
 
     import re
     words = set(
@@ -616,13 +616,13 @@ def trace_impact(target_dir: Path, symbol_query: str) -> str:
     docgen_dir = _get_docgen_dir(target_dir)
     if not docgen_dir.exists():
         return (
-            f"Error: .docgen directory not found in {target_dir}. "
+            f"Error: .pystdoc directory not found in {target_dir}. "
             "Please run pystdoc_sync first."
         )
 
     db_path = docgen_dir / "index.db"
     if not db_path.exists():
-        return "Error: index database (.docgen/index.db) not found."
+        return "Error: index database (.pystdoc/index.db) not found."
 
     db = DocgenDB(db_path)
     try:

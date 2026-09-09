@@ -14,18 +14,18 @@ class TestMCPServer(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.test_dir = Path(self.tmp_dir.name)
-        self.docgen_dir = self.test_dir / ".docgen"
-        self.docgen_dir.mkdir(parents=True)
-        self.docs_dir = self.docgen_dir / "documents"
+        self.pystdoc_dir = self.test_dir / ".pystdoc"
+        self.pystdoc_dir.mkdir(parents=True)
+        self.docs_dir = self.pystdoc_dir / "documents"
         self.docs_dir.mkdir(parents=True)
-        self.design_dir = self.docgen_dir / "design"
+        self.design_dir = self.pystdoc_dir / "design"
         self.design_dir.mkdir(parents=True)
 
         # Setup sample files
-        (self.docgen_dir / "files.txt").write_text(
+        (self.pystdoc_dir / "files.txt").write_text(
             "src/main.py\n", encoding="utf-8"
         )
-        (self.docgen_dir / "README.md").write_text(
+        (self.pystdoc_dir / "README.md").write_text(
             "# Project README", encoding="utf-8"
         )
         (self.design_dir / "overview.md").write_text(
@@ -45,7 +45,7 @@ class TestMCPServer(unittest.TestCase):
         )
 
         # Setup sample DB
-        db_path = self.docgen_dir / "index.db"
+        db_path = self.pystdoc_dir / "index.db"
         with DocgenDB(db_path) as db:
             sym_fn = Symbol(
                 name="run_calc",
@@ -122,10 +122,10 @@ class TestMCPServer(unittest.TestCase):
         )
         self.assertIn("not found", res_not_found.lower())
 
-        # 3. Non-existent .docgen dir
+        # 3. Non-existent .pystdoc dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(symbol="run_calc", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
     def test_mcp_list_symbols(self):
         server = create_mcp_server()
@@ -154,10 +154,10 @@ class TestMCPServer(unittest.TestCase):
         res_type = tool_fn(kind="type", path=str(self.test_dir))
         self.assertIn("calc.CalcState", res_type)
 
-        # 5. Non-existent .docgen dir
+        # 5. Non-existent .pystdoc dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(kind="all", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
     def test_mcp_get_design(self):
         server = create_mcp_server()
@@ -203,10 +203,10 @@ class TestMCPServer(unittest.TestCase):
         )
         self.assertEqual(res_file_path, "# Query Module")
 
-        # 8. Non-existent .docgen dir
+        # 8. Non-existent .pystdoc dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(section="overview", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
     def test_mcp_get_overview(self):
         server = create_mcp_server()
@@ -222,15 +222,15 @@ class TestMCPServer(unittest.TestCase):
         self.assertIn("# Project README", res)
         self.assertIn("# Architecture Overview", res)
 
-        # 2. Non-existent .docgen dir
+        # 2. Non-existent .pystdoc dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
         # 3. Empty docs
         with tempfile.TemporaryDirectory() as empty_proj:
             p = Path(empty_proj)
-            (p / ".docgen" / "design").mkdir(parents=True)
+            (p / ".pystdoc" / "design").mkdir(parents=True)
             res_empty = tool_fn(path=empty_proj)
             self.assertIn("No overview documentation available", res_empty)
 
@@ -269,12 +269,12 @@ class TestMCPServer(unittest.TestCase):
         # 6. Non-existent dir
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(query="calc", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
         # 7. Missing DB
         with tempfile.TemporaryDirectory() as no_db_proj:
             p = Path(no_db_proj)
-            (p / ".docgen").mkdir(parents=True)
+            (p / ".pystdoc").mkdir(parents=True)
             res_no_db = tool_fn(query="calc", path=no_db_proj)
             self.assertIn("Error: index database", res_no_db)
 
@@ -292,21 +292,21 @@ class TestMCPServer(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as empty_dir:
             res_no_dir = tool_fn(path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res_no_dir)
+            self.assertIn("Error: .pystdoc directory not found", res_no_dir)
 
     def test_mcp_locate_feature_missing_docgen(self):
         server = create_mcp_server()
         tool_fn = server._tool_manager.get_tool("pystdoc_locate_feature").fn
         with tempfile.TemporaryDirectory() as empty_dir:
             res = tool_fn(query="test", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res)
+            self.assertIn("Error: .pystdoc directory not found", res)
 
     def test_mcp_trace_impact_missing_docgen(self):
         server = create_mcp_server()
         tool_fn = server._tool_manager.get_tool("pystdoc_trace_impact").fn
         with tempfile.TemporaryDirectory() as empty_dir:
             res = tool_fn(symbol="test", path=empty_dir)
-            self.assertIn("Error: .docgen directory not found", res)
+            self.assertIn("Error: .pystdoc directory not found", res)
 
     def test_mcp_sync(self):
         server = create_mcp_server()

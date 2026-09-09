@@ -163,12 +163,12 @@ class TestEngineFull(unittest.TestCase):
         f.write_text("int x = 1;\n", encoding="utf-8")
 
         # Corrupt existing hash files
-        hash_f = self.test_dir / ".docgen" / "documents" / "file.c.hash"
+        hash_f = self.test_dir / ".pystdoc" / "documents" / "file.c.hash"
         hash_f.parent.mkdir(parents=True, exist_ok=True)
         hash_f.write_text("old_hash", encoding="utf-8")
 
         sym = Symbol(name="x", kind="variable", line_start=1, line_end=1)
-        docgen_doc = self.test_dir / ".docgen" / "documents"
+        docgen_doc = self.test_dir / ".pystdoc" / "documents"
         sym_hash_f = docgen_doc / "file.c.var.x.hash"
         sym_hash_f.write_text("old_sym_hash", encoding="utf-8")
 

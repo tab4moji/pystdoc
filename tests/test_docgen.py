@@ -109,7 +109,7 @@ class TestDocgen(unittest.TestCase):
                          "src.client.APIClient.fetch")
 
     def test_sqlite_db_operations(self):
-        db_path = self.test_dir / ".docgen" / "index.db"
+        db_path = self.test_dir / ".pystdoc" / "index.db"
         db = DocgenDB(db_path)
 
         is_changed = db.update_file_hash("src/test.c", "hash_v1")
@@ -149,7 +149,7 @@ class TestDocgen(unittest.TestCase):
         )
         self.assertEqual(res_en, 0)
         doc_en = (
-            self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
+            self.test_dir / ".pystdoc" / "documents" / "src" / "sample.c.md"
         ).read_text(encoding="utf-8")
         self.assertIn("## 1. Basic Information", doc_en)
         self.assertIn("Executes `add` operations.", doc_en)
@@ -164,7 +164,7 @@ class TestDocgen(unittest.TestCase):
         )
         self.assertEqual(res_ja, 0)
         doc_ja = (
-            self.test_dir / ".docgen" / "documents" / "src" / "sample.c.md"
+            self.test_dir / ".pystdoc" / "documents" / "src" / "sample.c.md"
         ).read_text(encoding="utf-8")
         self.assertIn("## 1. Basic Information", doc_ja)
         self.assertIn("`add` の処理を実行する。", doc_ja)
@@ -235,13 +235,13 @@ class TestDocgen(unittest.TestCase):
         self.assertEqual(res1, 0)
         sym_doc = (
             self.test_dir
-            / ".docgen"
+            / ".pystdoc"
             / "documents"
             / "src"
             / "calc.c.fn.multiply.md"
         )
         file_doc = (
-            self.test_dir / ".docgen" / "documents" / "src" / "calc.c.md"
+            self.test_dir / ".pystdoc" / "documents" / "src" / "calc.c.md"
         )
         self.assertTrue(sym_doc.exists())
         self.assertTrue(file_doc.exists())
@@ -258,7 +258,119 @@ class TestDocgen(unittest.TestCase):
             language="English",
         )
         self.assertEqual(res2, 0)
+
+    def test_comment_only_change_skips_doc_generation(self):
+        c_file = self.src_dir / "comment_test.c"
+        c_file.write_text(
+            "int calculate(int a, int b) {\n"
+            "    return a + b;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        # 1st run
+        res1 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res1, 0)
+        sym_doc = (
+            self.test_dir
+            / ".pystdoc"
+            / "documents"
+            / "src"
+            / "comment_test.c.fn.calculate.md"
+        )
         self.assertTrue(sym_doc.exists())
+        mtime1 = sym_doc.stat().st_mtime_ns
+
+        # Update ONLY comments in source code
+        import time
+        time.sleep(0.05)
+        c_file.write_text(
+            "// This is a new comment explaining calculate\n"
+            "/* Multi-line comment\n"
+            "   here */\n"
+            "int calculate(int a, int b) {\n"
+            "    // Inside logic comment\n"
+            "    return a + b;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # 2nd run: should skip regenerate because logic hash is identical
+        res2 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res2, 0)
+        mtime2 = sym_doc.stat().st_mtime_ns
+        self.assertEqual(mtime1, mtime2)
+
+        # Update actual logic
+        time.sleep(0.05)
+        c_file.write_text(
+            "int calculate(int a, int b) {\n"
+            "    return a * b;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # 3rd run: should regenerate because logic changed
+        res3 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(res3, 0)
+        mtime3 = sym_doc.stat().st_mtime_ns
+        self.assertNotEqual(mtime1, mtime3)
+
+    def test_logic_hash_and_full_hash_functions(self):
+        from pystdoc.hasher import (
+            compute_symbol_hash,
+            compute_logic_hash,
+        )
+        code1 = "int foo(int x) {\n    return x + 1;\n}"
+        code2 = (
+            "/* Comment */\n"
+            "int foo(int x) {\n"
+            "    // Inside\n"
+            "    return x + 1;\n"
+            "}"
+        )
+
+        full1 = compute_symbol_hash(code1, "int foo(int x)")
+        full2 = compute_symbol_hash(code2, "int foo(int x)")
+        self.assertNotEqual(full1, full2)
+
+        logic1 = compute_logic_hash(code1, "int foo(int x)", lang="c")
+        logic2 = compute_logic_hash(code2, "int foo(int x)", lang="c")
+        self.assertEqual(logic1, logic2)
+
+        # Python AST-based logic hash
+        py_code1 = "def bar(a, b):\n    return a + b\n"
+        py_code2 = (
+            "# Header comment\n"
+            "def bar(a, b):\n"
+            "    # add values\n"
+            "    return a + b\n"
+        )
+        py_full1 = compute_symbol_hash(py_code1, "def bar(a, b)")
+        py_full2 = compute_symbol_hash(py_code2, "def bar(a, b)")
+        self.assertNotEqual(py_full1, py_full2)
+
+        py_logic1 = compute_logic_hash(
+            py_code1, "def bar(a, b)", lang="python"
+        )
+        py_logic2 = compute_logic_hash(
+            py_code2, "def bar(a, b)", lang="python"
+        )
+        self.assertEqual(py_logic1, py_logic2)
 
 
 if __name__ == "__main__":

@@ -8,8 +8,14 @@ from typing import Any, Dict, Optional
 
 
 def write_flushed_text(file_path: Path, text: str) -> None:
-    """Write text to file with immediate mkdir, flush, and fsync."""
+    """Write text to file with immediate mkdir, flush, and fsync if changed."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
+    if file_path.exists():
+        try:
+            if file_path.read_text(encoding="utf-8") == text:
+                return
+        except Exception:
+            pass
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(text)
         f.flush()
@@ -17,11 +23,12 @@ def write_flushed_text(file_path: Path, text: str) -> None:
 
 
 def save_symbol_cache(
+
     target_dir: Path, unique_id: str, data: Dict[str, Any]
 ) -> Path:
     """Save symbol LLM analysis result to json cache file."""
     safe_name = re.sub(r"[^\w\-.]", "_", unique_id)
-    cache_dir = target_dir / ".docgen" / "cache"
+    cache_dir = target_dir / ".pystdoc" / "cache"
     cache_file = cache_dir / f"{safe_name}.json"
     content = json.dumps(data, ensure_ascii=False, indent=2)
     write_flushed_text(cache_file, content)
@@ -33,7 +40,7 @@ def load_symbol_cache(
 ) -> Optional[Dict[str, Any]]:
     """Load cached LLM analysis data for a symbol."""
     safe_name = re.sub(r"[^\w\-.]", "_", unique_id)
-    cache_file = target_dir / ".docgen" / "cache" / f"{safe_name}.json"
+    cache_file = target_dir / ".pystdoc" / "cache" / f"{safe_name}.json"
     if cache_file.exists():
         try:
             return json.loads(cache_file.read_text(encoding="utf-8"))

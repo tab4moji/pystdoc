@@ -209,7 +209,7 @@ fun calculateSum(a: Int, b: Int): Int {
         self.assertEqual(ret, 0)
 
         # Verify generated documents
-        docgen_dir = src_dir / ".docgen" / "documents"
+        docgen_dir = src_dir / ".pystdoc" / "documents"
         self.assertTrue((docgen_dir / "Main.java.md").exists())
         self.assertTrue((docgen_dir / "Utils.kt.md").exists())
         self.assertTrue((docgen_dir / "Main.java.type.Main.md").exists())

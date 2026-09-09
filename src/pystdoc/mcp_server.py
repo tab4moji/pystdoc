@@ -102,7 +102,7 @@ class MCPWatcherManager:
                     if client.check_availability():
                         llm_client = client
 
-                    db_path = target_dir / ".docgen" / "index.db"
+                    db_path = target_dir / ".pystdoc" / "index.db"
                     db = DocgenDB(db_path) if db_path.exists() else None
                     generate_readme_doc(
                         target_dir=target_dir,
@@ -178,10 +178,10 @@ def create_mcp_server(
     def _missing_docgen_msg(target: Path) -> str:
         p_str = target.as_posix()
         return (
-            f"Error: .docgen directory not found in {p_str}.\n"
+            f"Error: .pystdoc directory not found in {p_str}.\n"
             "Guidance for Assistant: Documentation and symbol index are not "
             "generated yet. Please politely ask the user for permission: "
-            f"'`.docgen` が未生成のため、`pystdoc sync --dir {p_str}` "
+            f"'`.pystdoc` が未生成のため、`pystdoc sync --dir {p_str}` "
             "を実行してインデックスとドキュメントを生成してもよろしいですか？' "
             "(or equivalent in user's language). Once approved, call "
             f"`pystdoc_sync(path='{p_str}')` or run "
@@ -191,9 +191,9 @@ def create_mcp_server(
     server_instructions = (
         "pystdoc: Structural & Architecture Documentation MCP Server.\n"
         "Guidelines for LLM assistant (e.g. OpenCode):\n"
-        "1. When .docgen is missing or ungenerated in the target workspace/"
+        "1. When .pystdoc is missing or ungenerated in the target workspace/"
         "directory, DO NOT silently fail or abort. Politely inform the user "
-        "and ask for permission: '`.docgen` が未生成のため、`pystdoc sync "
+        "and ask for permission: '`.pystdoc` が未生成のため、`pystdoc sync "
         "--dir ./` を実行してインデックスを生成してもよろしいですか？' "
         "(or in the user's language). Once approved, call "
         "`pystdoc_sync(path=...)` or run `pystdoc sync --dir ./`.\n"
@@ -232,7 +232,7 @@ def create_mcp_server(
             "Find exact files, functions, UI components, or line ranges that "
             "need to be modified for a feature request, UI change, or bug fix "
             "(e.g. 'delete debug button', 'add auth header'). "
-            "Use this INSTEAD of grep/glob. If .docgen is missing, ask user "
+            "Use this INSTEAD of grep/glob. If .pystdoc is missing, ask user "
             "permission to run pystdoc sync."
         ),
     )
@@ -250,7 +250,7 @@ def create_mcp_server(
         description=(
             "Trace callers, references, and outbound dependencies of a "
             "symbol to determine what other files/functions are affected "
-            "before modifying or deleting code. If .docgen is missing, "
+            "before modifying or deleting code. If .pystdoc is missing, "
             "ask user permission to run pystdoc sync."
         ),
     )
@@ -268,7 +268,7 @@ def create_mcp_server(
         description=(
             "Get the high-level executive summary, software classification, "
             "purpose, and architectural overview of the project in one call. "
-            "If .docgen is missing, ask user permission to run pystdoc sync."
+            "If .pystdoc is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_overview(path: str = "./") -> str:
@@ -295,7 +295,7 @@ def create_mcp_server(
             )
         if not parts:
             return (
-                "No overview documentation available in .docgen. "
+                "No overview documentation available in .pystdoc. "
                 "Please run pystdoc_sync."
             )
         return "\n\n---\n\n".join(parts)
@@ -319,7 +319,7 @@ def create_mcp_server(
             return _missing_docgen_msg(target_dir)
         db_path = docgen_dir / "index.db"
         if not db_path.exists():
-            return "Error: index database (.docgen/index.db) not found."
+            return "Error: index database (.pystdoc/index.db) not found."
 
         db = DocgenDB(db_path)
         try:
@@ -386,7 +386,7 @@ def create_mcp_server(
         description=(
             "Get rich purpose, overview, signature, line ranges and "
             "markdown doc for a symbol (function, class, variable, or FQDN). "
-            "If .docgen is missing, ask user permission to run pystdoc sync."
+            "If .pystdoc is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_symbol(symbol: str, path: str = "./") -> str:
@@ -413,7 +413,7 @@ def create_mcp_server(
             if ret != 0:
                 return (
                     err_str.strip()
-                    or f"Symbol '{symbol}' not found in .docgen."
+                    or f"Symbol '{symbol}' not found in .pystdoc."
                 )
             return out_str.strip()
         finally:
@@ -425,7 +425,7 @@ def create_mcp_server(
         description=(
             "List all indexed symbols (functions, variables, types/classes) "
             "with definition line ranges (<file>:<from>:<to>). "
-            "If .docgen is missing, ask user permission to run pystdoc sync."
+            "If .pystdoc is missing, ask user permission to run pystdoc sync."
         ),
     )
     def list_symbols(kind: str = "all", path: str = "./") -> str:
@@ -470,7 +470,7 @@ def create_mcp_server(
         description=(
             "Get high-level architecture design documents ('readme', "
             "'overview', 'data_models', 'execution_model', or module name). "
-            "If .docgen is missing, ask user permission to run pystdoc sync."
+            "If .pystdoc is missing, ask user permission to run pystdoc sync."
         ),
     )
     def get_design(section: str = "readme", path: str = "./") -> str:
@@ -526,7 +526,7 @@ def create_mcp_server(
         )
         return (
             f"Design document section '{section}' not found in "
-            f".docgen/design/.{mod_hint} Valid standard sections are "
+            f".pystdoc/design/.{mod_hint} Valid standard sections are "
             "'readme', 'overview', 'data_models', 'execution_model'."
         )
 
@@ -534,7 +534,7 @@ def create_mcp_server(
         name="pystdoc_list_files",
         description=(
             "List all indexed source code files. "
-            "If .docgen is missing, ask user permission to run pystdoc sync."
+            "If .pystdoc is missing, ask user permission to run pystdoc sync."
         ),
     )
     def list_files(path: str = "./") -> str:
@@ -558,7 +558,7 @@ def create_mcp_server(
     @mcp.tool(
         name="pystdoc_sync",
         description=(
-            "Generate or update documentation suite (.docgen/) for a "
+            "Generate or update documentation suite (.pystdoc/) for a "
             "codebase. Set fast=True for fast bottom-up symbol sync "
             "(skips top-down design/report synthesis; recommended "
             "for OpenCode during coding to rapidly refresh indexes)."
@@ -603,7 +603,7 @@ def create_mcp_server(
             if fast:
                 return (
                     "Successfully synchronized symbol documentation (fast "
-                    f"bottom-up mode) in {target_dir / '.docgen'}. All "
+                    f"bottom-up mode) in {target_dir / '.pystdoc'}. All "
                     "symbols, call graphs, and metadata are up to date."
                 )
 
@@ -640,11 +640,11 @@ def create_mcp_server(
                 allow_fallback=fallback,
             )
 
-            readme_file = target_dir / ".docgen" / "README.md"
+            readme_file = target_dir / ".pystdoc" / "README.md"
             readme_summary = ""
             if readme_file.exists():
                 readme_summary = (
-                    "\n\n### Project Executive Summary (.docgen/README.md):\n"
+                    "\n\n### Project Executive Summary (.pystdoc/README.md):\n"
                     + readme_file.read_text(
                         encoding="utf-8", errors="replace"
                     ).strip()
@@ -652,7 +652,7 @@ def create_mcp_server(
 
             return (
                 "Successfully synchronized documentation in "
-                f"{target_dir / '.docgen'}.{readme_summary}"
+                f"{target_dir / '.pystdoc'}.{readme_summary}"
             )
         except Exception as e:
             return f"Error during sync: {e}"

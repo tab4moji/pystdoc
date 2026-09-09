@@ -224,7 +224,7 @@ class TestCoverageBoost(unittest.TestCase):
 
         doc_file = (
             self.test_dir
-            / ".docgen"
+            / ".pystdoc"
             / "documents"
             / "src"
             / "proc.c.fn.process.md"
@@ -235,7 +235,7 @@ class TestCoverageBoost(unittest.TestCase):
 
     def test_designgen_with_llm_mock(self):
         # Prepare dummy symbol doc first
-        doc_dir = self.test_dir / ".docgen" / "documents" / "src"
+        doc_dir = self.test_dir / ".pystdoc" / "documents" / "src"
         doc_dir.mkdir(parents=True, exist_ok=True)
         (doc_dir / "mod.c.md").write_text(
             "# src/mod.c\n## Symbols\n- `process`: Does work\n",
@@ -259,7 +259,9 @@ class TestCoverageBoost(unittest.TestCase):
             )
             self.assertEqual(ret, 0)
             self.assertTrue(
-                (self.test_dir / ".docgen" / "design" / "overview.md").exists()
+                (
+                    self.test_dir / ".pystdoc" / "design" / "overview.md"
+                ).exists()
             )
 
     def test_report_engine_llm_fallback_error(self):
@@ -416,7 +418,7 @@ class TestCoverageBoost(unittest.TestCase):
 
     def test_hasher_exception_paths(self):
         # Create existing hash file
-        hash_f = self.test_dir / ".docgen" / "documents" / "bad.c.hash"
+        hash_f = self.test_dir / ".pystdoc" / "documents" / "bad.c.hash"
         hash_f.parent.mkdir(parents=True, exist_ok=True)
         hash_f.write_text("old_hash", encoding="utf-8")
 
@@ -472,7 +474,7 @@ class TestCoverageBoost(unittest.TestCase):
     def test_design_generation_pipeline_strict_error(self):
         mock_client = MagicMock()
         mock_client.chat_completion.side_effect = LLMError("Design error")
-        dummy_md = self.test_dir / ".docgen" / "documents" / "sample.c.md"
+        dummy_md = self.test_dir / ".pystdoc" / "documents" / "sample.c.md"
         dummy_md.parent.mkdir(parents=True, exist_ok=True)
         dummy_md.write_text(
             "# doc\n- **Symbol Kind**: function\n", encoding="utf-8"
@@ -1011,15 +1013,21 @@ class TestCoverageBoost(unittest.TestCase):
             c = LLMClient("http://localhost:11434")
 
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
+        mock_body = json.dumps(
             {"choices": [{"message": {"content": ""}}]}
         ).encode("utf-8")
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = mock_resp
-        mock_cm.__exit__.return_value = None
+        mock_resp.read.return_value = mock_body
+        lines_iter = [mock_body, b""]
+        mock_resp.readline.side_effect = (
+            lambda: lines_iter.pop(0) if lines_iter else b""
+        )
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
 
-        with patch("urllib.request.urlopen", return_value=mock_cm):
-            with patch("time.sleep", return_value=None):
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch(
+                "pystdoc.llm_client.interruptible_sleep", return_value=None
+            ):
                 with self.assertRaises(LLMError) as cm:
                     c.chat_completion(
                         [{"role": "user", "content": "hi"}], max_retries=2
@@ -1036,7 +1044,9 @@ class TestCoverageBoost(unittest.TestCase):
             return '{"purpose": "Recovered", "overview": "Ok"}'
 
         with patch.object(c, "chat_completion", side_effect=fake_chat):
-            with patch("time.sleep", return_value=None):
+            with patch(
+                "pystdoc.llm_client.interruptible_sleep", return_value=None
+            ):
                 res = c.explain_symbol(
                     name="retry_fn",
                     kind="function",
@@ -1053,7 +1063,9 @@ class TestCoverageBoost(unittest.TestCase):
         with patch.object(
             c, "chat_completion", return_value="Invalid non-json response"
         ):
-            with patch("time.sleep", return_value=None):
+            with patch(
+                "pystdoc.llm_client.interruptible_sleep", return_value=None
+            ):
                 fb_res = c.refine_variable_top_down(
                     var_name="v",
                     var_kind="var",
@@ -1270,7 +1282,7 @@ class TestCoverageBoost(unittest.TestCase):
             allow_fallback=True,
         )
 
-        docgen_dir = self.test_dir / ".docgen"
+        docgen_dir = self.test_dir / ".pystdoc"
         readme_f = docgen_dir / "README.md"
         overview_f = docgen_dir / "design" / "overview.md"
         data_models_f = docgen_dir / "design" / "data_models.md"
@@ -1346,12 +1358,12 @@ class TestCoverageBoost(unittest.TestCase):
             language="English",
         )
 
-        # 2. Modify helper implementation (internal tweak)
+        # 2. Modify helper implementation and signature
         py_file.write_text(
             "g_scale = 10\n\n"
-            "def helper(x: int) -> int:\n"
+            "def helper(x: int, step: int = 1) -> int:\n"
             "    # internal tweak\n"
-            "    y = x + 1\n"
+            "    y = x + step\n"
             "    return y\n\n"
             "def compute(a: int) -> int:\n"
             "    val = helper(a)\n"
@@ -1412,7 +1424,7 @@ class TestCoverageBoost(unittest.TestCase):
 
         # Check DB symbol hash is properly recorded
         from pystdoc.db import DocgenDB
-        db = DocgenDB(self.test_dir / ".docgen" / "index.db")
+        db = DocgenDB(self.test_dir / ".pystdoc" / "index.db")
         cur = db.conn.cursor()
         cur.execute("SELECT * FROM symbol_hashes")
         sym_records = cur.fetchall()
@@ -1601,6 +1613,191 @@ class TestCoverageBoost(unittest.TestCase):
         self.assertEqual(len(nodes), 2)
         self.assertEqual(nodes[0].unique_id, "Main.kt::fn.get")
         self.assertEqual(nodes[1].unique_id, "Main.kt::fn.get#2")
+
+    def test_is_trivial_internal_change_branches(self):
+        from pystdoc.engine import is_trivial_internal_change
+        from pystdoc.symbols import Symbol
+
+        sym = Symbol(
+            name="compute",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            signature="def compute(x: int) -> int",
+            callees=["helper"],
+        )
+
+        # 1. No old cache or empty purpose
+        self.assertFalse(is_trivial_internal_change(None, None, sym))
+        self.assertFalse(is_trivial_internal_change({}, None, sym))
+        self.assertFalse(
+            is_trivial_internal_change({"purpose": ""}, None, sym)
+        )
+
+        old_cache = {
+            "purpose": "Computes values",
+            "inputs_note": "x",
+            "outputs_note": "int",
+        }
+
+        # 2. No old meta -> returns True if cache exists
+        self.assertTrue(is_trivial_internal_change(old_cache, None, sym))
+
+        # 3. Kind mismatch
+        meta_diff_kind = {
+            "kind": "class",
+            "signature": "def compute(x: int) -> int",
+            "callees_json": json.dumps(["helper"]),
+        }
+        self.assertFalse(
+            is_trivial_internal_change(old_cache, meta_diff_kind, sym)
+        )
+
+        # 4. Signature mismatch
+        meta_diff_sig = {
+            "kind": "function",
+            "signature": "def compute(x: int, y: int) -> int",
+            "callees_json": json.dumps(["helper"]),
+        }
+        self.assertFalse(
+            is_trivial_internal_change(old_cache, meta_diff_sig, sym)
+        )
+
+        # 5. Callees mismatch
+        meta_diff_callees = {
+            "kind": "function",
+            "signature": "def compute(x: int) -> int",
+            "callees_json": json.dumps(["helper", "other"]),
+        }
+        self.assertFalse(
+            is_trivial_internal_change(old_cache, meta_diff_callees, sym)
+        )
+
+        # 6. Invalid callees JSON
+        meta_invalid_json = {
+            "kind": "function",
+            "signature": "def compute(x: int) -> int",
+            "callees_json": "INVALID_JSON",
+        }
+        self.assertFalse(
+            is_trivial_internal_change(old_cache, meta_invalid_json, sym)
+        )
+
+        # 7. Matching meta -> True
+        meta_match = {
+            "kind": "function",
+            "signature": "def compute(x: int) -> int",
+            "callees_json": json.dumps(["helper"]),
+        }
+        self.assertTrue(
+            is_trivial_internal_change(old_cache, meta_match, sym)
+        )
+
+    def test_docgen_trivial_change_stops_bottom_up(self):
+        # Setup source file with caller and helper
+        src_file = self.src_dir / "service.py"
+        src_file.write_text(
+            "def helper(x):\n"
+            "    return x + 1\n\n"
+            "def caller(y):\n"
+            "    return helper(y) * 2\n",
+            encoding="utf-8",
+        )
+
+        analyzed_symbols = []
+
+        class TrackingLLMClient:
+            token = None
+            host = "http://localhost:8080"
+            base_url = "http://localhost:8080"
+            model = "test-model"
+            context_size = 16384
+
+            def check_availability(self):
+                return True
+
+            def is_reachable(self):
+                return True
+
+            def explain_symbol(self, *args, **kwargs):
+                sym_name = kwargs.get("name", "")
+                analyzed_symbols.append(sym_name)
+                return {
+                    "purpose": f"Purpose of {sym_name}",
+                    "inputs": "Input params",
+                    "outputs": "Result value",
+                    "overview": f"Overview of {sym_name}",
+                }
+
+            def refine_variable_top_down(self, *args, **kwargs):
+                return {
+                    "role": "Variable role",
+                    "purpose": "Variable purpose",
+                }
+
+        tracking_client = TrackingLLMClient()
+        with patch("pystdoc.engine.LLMClient", return_value=tracking_client):
+            # 1. First run - generates initial docs and db metadata
+            ret1 = run_docgen(
+                target_dir=self.test_dir,
+                use_llm=True,
+                allow_fallback=False,
+                language="English",
+            )
+            self.assertEqual(ret1, 0)
+            self.assertIn("helper", analyzed_symbols)
+            self.assertIn("caller", analyzed_symbols)
+
+            # 2. Modify helper internal implementation trivially (x + 2)
+            analyzed_symbols.clear()
+            src_file.write_text(
+                "def helper(x):\n"
+                "    # Trivial comment & constant update\n"
+                "    return x + 2\n\n"
+                "def caller(y):\n"
+                "    return helper(y) * 2\n",
+                encoding="utf-8",
+            )
+
+            # 3. Second run - trivial change stops bottom-up caller reanalysis
+            ret2 = run_docgen(
+                target_dir=self.test_dir,
+                use_llm=True,
+                allow_fallback=False,
+                language="English",
+            )
+            self.assertEqual(ret2, 0)
+            # Both helper and caller should NOT be re-explained by LLM
+            self.assertEqual(len(analyzed_symbols), 0)
+
+    def test_db_load_symbol_metadata_found_and_none(self):
+        from pystdoc.db import DocgenDB
+        from pystdoc.symbols import Symbol
+
+        db_path = self.test_dir / ".pystdoc" / "index.db"
+        db = DocgenDB(db_path)
+
+        # None case
+        self.assertIsNone(db.load_symbol_metadata("non_existent"))
+
+        # Save and load case
+        sym = Symbol(
+            name="test_fn",
+            kind="function",
+            line_start=10,
+            line_end=20,
+            signature="def test_fn()",
+            callees=["a", "b"],
+            referencing_functions=["c"],
+        )
+        db.save_symbol_metadata("my_uid", sym, "src/main.py")
+        meta = db.load_symbol_metadata("my_uid")
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta["name"], "test_fn")
+        self.assertEqual(meta["kind"], "function")
+        self.assertEqual(meta["signature"], "def test_fn()")
+        self.assertEqual(json.loads(meta["callees_json"]), ["a", "b"])
+        db.close()
 
 
 if __name__ == "__main__":

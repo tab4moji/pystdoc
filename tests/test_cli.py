@@ -142,7 +142,7 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(cm.exception.code, 0)
 
         # Failure without fallback
-        shutil.rmtree(self.test_dir / ".docgen", ignore_errors=True)
+        shutil.rmtree(self.test_dir / ".pystdoc", ignore_errors=True)
         docgen_args = [
             "docgen",
             "--dir", str(self.test_dir),
@@ -153,7 +153,7 @@ class TestCLI(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 docgen_main()
 
-        readme_f = self.test_dir / ".docgen" / "README.md"
+        readme_f = self.test_dir / ".pystdoc" / "README.md"
         if readme_f.exists():
             readme_f.unlink()
 
@@ -346,7 +346,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
     def test_reportgen_cli_llm_unavailable_exit(self):
-        shutil.rmtree(self.test_dir / ".docgen", ignore_errors=True)
+        shutil.rmtree(self.test_dir / ".pystdoc", ignore_errors=True)
         test_args = [
             "reportgen",
             "--dir", str(self.test_dir),
@@ -454,8 +454,8 @@ class TestCLI(unittest.TestCase):
                 reportgen_main()
             self.assertEqual(cm.exception.code, 0)
         # In fast mode, documents/ is created, but README.md is not generated
-        self.assertTrue((self.test_dir / ".docgen" / "documents").exists())
-        self.assertFalse((self.test_dir / ".docgen" / "README.md").exists())
+        self.assertTrue((self.test_dir / ".pystdoc" / "documents").exists())
+        self.assertFalse((self.test_dir / ".pystdoc" / "README.md").exists())
 
     def test_watch_cli_fast(self):
         with patch("pystdoc.watcher.DNotifyWatcher.start") as mock_start:

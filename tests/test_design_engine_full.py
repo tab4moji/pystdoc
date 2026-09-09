@@ -21,7 +21,7 @@ from pystdoc.llm_client import LLMError
 class TestDesignEngineFull(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path(tempfile.mkdtemp())
-        self.doc_dir = self.test_dir / ".docgen" / "documents"
+        self.doc_dir = self.test_dir / ".pystdoc" / "documents"
         self.doc_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -132,10 +132,10 @@ class TestDesignEngineFull(unittest.TestCase):
             )
         self.assertEqual(ret, 0)
         self.assertTrue(
-            (self.test_dir / ".docgen" / "design" / "data_models.md").exists()
+            (self.test_dir / ".pystdoc" / "design" / "data_models.md").exists()
         )
         self.assertTrue(
-            (self.test_dir / ".docgen" / "design" / "overview.md").exists()
+            (self.test_dir / ".pystdoc" / "design" / "overview.md").exists()
         )
 
 

@@ -1,4 +1,4 @@
-"""Report Engine: Synthesizes high-level project README (.docgen/README.md)."""
+"""Report Engine: Synthesizes project README (.pystdoc/README.md)."""
 
 import hashlib
 import re
@@ -14,6 +14,7 @@ from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
 from pystdoc.perf import PerfProfileManager
 from pystdoc.progress import PhaseProgressTracker, is_terminal
+from pystdoc.interrupt import InterruptionState
 
 
 def generate_readme_doc(
@@ -53,7 +54,7 @@ def generate_readme_doc(
     )
     tracker.set_remaining_estimate(est_duration)
 
-    docgen_dir = target_dir / ".docgen"
+    docgen_dir = target_dir / ".pystdoc"
     design_dir = docgen_dir / "design"
     docs_dir = docgen_dir / "documents"
     out_file = docgen_dir / "README.md"
@@ -143,13 +144,13 @@ def generate_readme_doc(
     if db and not force and out_file.exists():
         cached_content = db.load_design_cache(cache_key, input_hash)
         if cached_content:
-            tracker.advance(1, extra="[Cached]: .docgen/README.md")
+            tracker.advance(1, extra="[Cached]: .pystdoc/README.md")
             tracker.finish()
             write_flushed_text(out_file, cached_content.strip() + "\n")
             return cached_content
 
     start_t = time.time()
-    tracker.render_current(extra=".docgen/README.md")
+    tracker.render_current(extra=".pystdoc/README.md")
 
     sys_msg = (
         "You are an objective senior code analyst and technical writer. "
@@ -204,7 +205,7 @@ Answer these 3 factual questions definitively in {norm_lang}
 
     turn3_prompt = (
         "Synthesize a concise, fact-based executive README "
-        f"(.docgen/README.md) in {norm_lang}.\n"
+        f"(.pystdoc/README.md) in {norm_lang}.\n"
         f"Output Language: {norm_lang} (Write all text in {norm_lang}).\n"
         "Tone rule: Strictly objective, concise, and definitive (言い切り型: "
         "〜である / 〜を提供する. Absolutely no vague expressions or praise).\n\n"
@@ -279,6 +280,7 @@ topological dependency mapping.
 """
 
     try:
+        InterruptionState.check_interrupted()
         if llm_client:
             # Turn 1: Project classification and essence
             msg1 = [
@@ -287,6 +289,7 @@ topological dependency mapping.
             ]
             ans1 = llm_client.chat_completion(msg1)
 
+            InterruptionState.check_interrupted()
             # Turn 2: Typical usage and execution flow
             msg2 = [
                 {"role": "system", "content": sys_msg},
@@ -296,6 +299,7 @@ topological dependency mapping.
             ]
             ans2 = llm_client.chat_completion(msg2)
 
+            InterruptionState.check_interrupted()
             # Turn 3: Final executive README synthesis
             msg3 = [
                 {"role": "system", "content": sys_msg},
@@ -308,6 +312,20 @@ topological dependency mapping.
             content = llm_client.chat_completion(msg3)
         else:
             content = default_readme
+    except KeyboardInterrupt:
+        InterruptionState.set_interrupted()
+        if tracker:
+            try:
+                tracker.finish()
+            except Exception:
+                pass
+        print(
+            "\n[Interrupted] reportgen aborted safely by user "
+            "(Ctrl-C or 'q').",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
     except Exception as e:
         if not allow_fallback:
             raise LLMError(
@@ -324,7 +342,7 @@ topological dependency mapping.
         line_count=30,
         elapsed_seconds=elapsed,
     )
-    tracker.advance(1, extra=".docgen/README.md", elapsed=elapsed)
+    tracker.advance(1, extra=".pystdoc/README.md", elapsed=elapsed)
     tracker.finish()
 
     write_flushed_text(out_file, content.strip() + "\n")

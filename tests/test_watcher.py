@@ -46,8 +46,8 @@ class TestWatcher(unittest.TestCase):
         new_file.unlink()
         self.assertTrue(watcher.check_changes())
 
-        # 4. Modify files inside .docgen/ (should be strictly ignored)
-        docgen_dir = self.test_dir / ".docgen"
+        # 4. Modify files inside .pystdoc/ (should be strictly ignored)
+        docgen_dir = self.test_dir / ".pystdoc"
         docgen_dir.mkdir(parents=True, exist_ok=True)
         (docgen_dir / "README.md").write_text("# Autogen", encoding="utf-8")
         (docgen_dir / "files.txt").write_text("main.py\n", encoding="utf-8")
@@ -201,8 +201,8 @@ class TestWatcher(unittest.TestCase):
             mock_start.assert_called_once()
 
         # 3. with LLM client available and existing db
-        (self.test_dir / ".docgen").mkdir(parents=True, exist_ok=True)
-        (self.test_dir / ".docgen" / "index.db").touch()
+        (self.test_dir / ".pystdoc").mkdir(parents=True, exist_ok=True)
+        (self.test_dir / ".pystdoc" / "index.db").touch()
         mock_client = MagicMock()
         mock_client.check_availability.return_value = True
 

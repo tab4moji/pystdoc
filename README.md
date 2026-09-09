@@ -12,17 +12,17 @@ It analyzes codebases in **bottom-up + top-down topological passes**, constructs
 
 ---
 
-## 📁 Output Directory: `.docgen/`
+## 📁 Output Directory: `.pystdoc/`
 
 > [!IMPORTANT]
-> **All generated documentation, architecture designs, and caches are automatically centralized inside the `.docgen/` directory of your target project.**
+> **All generated documentation, architecture designs, and caches are automatically centralized inside the `.pystdoc/` directory of your target project.**
 > Your existing source code files are never modified.
 
-When `pystdoc` finishes, you can explore the complete documentation suite starting from `.docgen/README.md`:
+When `pystdoc` finishes, you can explore the complete documentation suite starting from `.pystdoc/README.md`:
 
 ```text
 your_project/
-├── .docgen/                          # <-- Centralized output directory
+├── .pystdoc/                         # <-- Centralized output directory
 │   ├── README.md                     # Executive summary: "What does this project actually do?"
 │   ├── design/                       # System architecture and design documentation
 │   │   ├── overview.md               # Architecture overview & inter-module Mermaid diagram
@@ -50,9 +50,9 @@ your_project/
    - Automatically breaks cyclic mutual recursions and organizes code symbols into dependency-safe execution levels.
    - Level-by-level parallel LLM execution guarantees context-rich bottom-up summaries without race conditions.
 2. **3-in-1 Unified Documentation Pipeline**:
-   - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.docgen/documents/`).
-   - `designgen`: Map-Reduce architectural synthesis (`.docgen/design/`).
-   - `reportgen` / `pystdoc`: Executive summary README (`.docgen/README.md`) answering *"What does this project actually do?"*
+   - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.pystdoc/documents/`).
+   - `designgen`: Map-Reduce architectural synthesis (`.pystdoc/design/`).
+   - `reportgen` / `pystdoc`: Executive summary README (`.pystdoc/README.md`) answering *"What does this project actually do?"*
 3. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
    - **C/C++**: `compile_commands.json` integration, include path resolution, and macro expansion via `libclang`.
    - **Java / Kotlin**: AST parsing via `javalang` & `kopyt` with class hierarchy, companion objects, and data classes.
@@ -90,8 +90,8 @@ pystdoc sync --fast --dir ./my_project/
 pystdoc sync --dir ./my_project/ --language 日本語
 ```
 
-#### 2. Inspect & Query Indexed Codebase (Read from `.docgen/`)
-Once `.docgen/` is generated, you can query symbols, functions, variables, and files without touching LLMs:
+#### 2. Inspect & Query Indexed Codebase (Read from `.pystdoc/`)
+Once `.pystdoc/` is generated, you can query symbols, functions, variables, and files without touching LLMs:
 
 ```bash
 # List all indexed source code files
@@ -166,7 +166,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | `watch` | `monitor` | Continuously watch source directories for changes (dnotify / mtime) and auto-sync on save. |
 | `locate` | `find`, `search` | Locate candidate files, functions, UI components, or line ranges matching a feature description or query. |
 | `impact` | `trace`, `callers` | Trace inbound callers and outbound dependencies of a symbol for impact analysis before modifying or deleting code. |
-| `list` | `ls` | List all indexed source files from `.docgen/`. |
+| `list` | `ls` | List all indexed source files from `.pystdoc/`. |
 | `functions` | `fn`, `func`, `function`, `funcs`, `fns` | List all functions/methods, or inspect `<name>` description directly (`fn <name>`). |
 | `variables` | `var`, `variable`, `vars` | List all variables/constants/fields, or inspect `<name>` description directly (`var <name>`). |
 | `types` | `type`, `class`, `classes`, `struct`, `structs` | List all types/classes/structs/enums, or inspect `<name>` description directly (`type <name>`). |
@@ -205,7 +205,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 `pystdoc` includes a built-in MCP server (`pystdoc mcp`) for **OpenCode**, Claude Desktop, and other MCP-compatible AI agents. It enables small local LLMs to retrieve targeted AST structures and symbol docs on-demand without loading multi-thousand-line source files into context.
 
 > [!NOTE]
-> **File Watching Option (`--watch`)**: In MCP mode, `--no-watch` is the default. To enable automatic background file watching via Linux `dnotify` / mtime monitoring (which automatically keeps `.docgen/` synchronized whenever code files are edited), pass `--watch` to the command (e.g. `["pystdoc", "mcp", "--watch"]`). Internal `.docgen/` files are strictly excluded from monitoring to prevent self-update loops.
+> **File Watching Option (`--watch`)**: In MCP mode, `--no-watch` is the default. To enable automatic background file watching via Linux `dnotify` / mtime monitoring (which automatically keeps `.pystdoc/` synchronized whenever code files are edited), pass `--watch` to the command (e.g. `["pystdoc", "mcp", "--watch"]`). Internal `.pystdoc/` files are strictly excluded from monitoring to prevent self-update loops.
 
 ### OpenCode Configuration (`~/.config/opencode/opencode.json`)
 
