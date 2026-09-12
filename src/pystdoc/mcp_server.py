@@ -13,7 +13,7 @@ except (ImportError, ModuleNotFoundError):
     except (ImportError, ModuleNotFoundError):
         FastMCP = None  # type: ignore
 
-from pystdoc.config import load_config
+from pystdoc.config import detect_terminal_language, load_config
 from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
@@ -53,7 +53,9 @@ class MCPWatcherManager:
             def _on_change() -> None:
                 try:
                     cfg = load_config(target_dir)
-                    lang = cfg.get("language", "English")
+                    lang = (
+                        cfg.get("language") or detect_terminal_language()
+                    )
                     host = cfg.get("host")
                     model = cfg.get("model")
                     token = cfg.get("token")
@@ -576,7 +578,7 @@ def create_mcp_server(
         cfg = load_config(target_dir)
 
         use_llm = not no_llm if no_llm is not None else True
-        lang = language or cfg.get("language", "English")
+        lang = language or cfg.get("language") or detect_terminal_language()
         host = cfg.get("host")
         model = cfg.get("model")
         token = cfg.get("token")

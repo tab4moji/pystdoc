@@ -17,6 +17,71 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "allow_fallback": False,
 }
 
+LANGUAGE_CODE_MAP: Dict[str, str] = {
+    "ja": "Japanese",
+    "en": "English",
+    "zh": "Chinese",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "ko": "Korean",
+    "it": "Italian",
+    "ru": "Russian",
+    "pt": "Portuguese",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "no": "Norwegian",
+    "tr": "Turkish",
+    "ar": "Arabic",
+    "vi": "Vietnamese",
+    "th": "Thai",
+    "id": "Indonesian",
+    "hi": "Hindi",
+    "uk": "Ukrainian",
+    "cs": "Czech",
+}
+
+
+def detect_terminal_language() -> str:
+    """Detect terminal/system language from locale environment variables."""
+    for env_var in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        val = os.environ.get(env_var)
+        if val:
+            val = val.strip()
+            if not val:
+                continue
+            if val.lower() in ("c", "posix", "c.utf-8", "c.utf8"):
+                return "English"
+            first_part = val.split(":")[0].strip()
+            lang_code = first_part.split(".")[0].split("@")[0].strip()
+            if not lang_code:
+                return "English"
+            l_lower = lang_code.lower()
+            if l_lower in ("japanese", "ja", "jp", "日本語"):
+                return "Japanese"
+            elif l_lower in ("english", "en"):
+                return "English"
+            elif l_lower in ("chinese", "zh"):
+                return "Chinese"
+            elif l_lower in ("spanish", "es"):
+                return "Spanish"
+            elif l_lower in ("french", "fr"):
+                return "French"
+            elif l_lower in ("german", "de"):
+                return "German"
+            elif l_lower in ("korean", "ko"):
+                return "Korean"
+
+            primary = l_lower.split("_")[0].split("-")[0]
+            if primary in LANGUAGE_CODE_MAP:
+                return LANGUAGE_CODE_MAP[primary]
+            return lang_code.capitalize()
+
+    return "English"
+
 
 def get_user_config_path() -> Path:
     """Return user configuration path ~/.config/pystdoc/pystdoc.json."""
@@ -51,6 +116,7 @@ def load_config(target_dir: Optional[Path] = None) -> Dict[str, Any]:
     Defaults < ~/.config/pystdoc/pystdoc.json < ./.pystdoc.json < Env vars
     """
     config = dict(DEFAULT_CONFIG)
+    config["language"] = detect_terminal_language()
 
     # 1. User config (~/.config/pystdoc/pystdoc.json)
     user_cfg_path = get_user_config_path()
@@ -89,7 +155,6 @@ def load_config(target_dir: Optional[Path] = None) -> Dict[str, Any]:
     env_lang = (
         os.environ.get("DOCGEN_LANG")
         or os.environ.get("PYSTDOC_LANG")
-        or os.environ.get("LANGUAGE")
     )
     if env_lang:
         config["language"] = env_lang

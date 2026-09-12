@@ -65,7 +65,7 @@ your_project/
    - Instant 360-degree dependency tracing: inspect where a symbol is called from (*Inbound Callers / References*) and what it uses (*Outbound Dependencies*) before making breaking code changes or deletions.
 6. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
-   - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (e.g. `English`, `Japanese`, `日本語`).
+   - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (defaults to terminal language, e.g. `Japanese`, `English`, `日本語`).
 
 ---
 
@@ -196,7 +196,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 2. **Environment Variables** (`LLM_HOST`, `LLM_MODEL`, `OPENAI_API_KEY`, etc.)
 3. **Project Config** (`<project>/.pystdoc.json`)
 4. **User Config** (`~/.config/pystdoc/pystdoc.json`)
-5. **Builtin Defaults** (`http://127.0.0.1:11434`, `gemma4-26b-a4b`, `English`)
+5. **Builtin Defaults** (`http://127.0.0.1:11434`, `gemma4-26b-a4b`, Terminal language / `English`)
 
 ---
 
@@ -244,7 +244,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | :--- | :--- | :--- | :--- |
 | `--dir` | | `./` | Target project directory path |
 | `--fast` | | `false` | Fast bottom-up sync only (runs docgen symbol indexing, skips designgen and reportgen) |
-| `--language` | `-l` | `English` | Output documentation language (`English`, `Japanese`, `日本語`) |
+| `--language` | `-l` | Terminal locale | Output documentation language (defaults to terminal language; e.g. `Japanese`, `English`, `日本語`) |
 | `--host` | `-H`, `--base-url` | `http://127.0.0.1:11434` | LLM server host endpoint URL |
 | `--model` | `-m`, `LLM_MODEL` | `gemma4-26b-a4b` | LLM model identifier |
 | `--token` | `--api-key`, `OPENAI_API_KEY` | `None` | API Bearer token |

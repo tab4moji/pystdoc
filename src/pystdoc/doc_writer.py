@@ -34,7 +34,12 @@ def normalize_language(lang: Optional[str]) -> str:
     """Normalize language string into standard representation."""
     if not lang:
         return "English"
-    l_lower = lang.strip().lower()
+    l_strip = lang.strip()
+    if not l_strip:
+        return "English"
+    l_lower = l_strip.lower()
+    if l_lower in ("c", "posix", "c.utf-8", "c.utf8"):
+        return "English"
     if l_lower in ("japanese", "ja", "jp", "日本語"):
         return "Japanese"
     elif l_lower in ("english", "en"):
@@ -43,7 +48,21 @@ def normalize_language(lang: Optional[str]) -> str:
         return "Chinese"
     elif l_lower in ("spanish", "es"):
         return "Spanish"
-    return lang.strip().capitalize()
+    elif l_lower in ("french", "fr"):
+        return "French"
+    elif l_lower in ("german", "de"):
+        return "German"
+    elif l_lower in ("korean", "ko"):
+        return "Korean"
+
+    first_part = l_lower.split(":")[0].strip()
+    lang_tag = first_part.split(".")[0].split("@")[0].strip()
+    primary = lang_tag.split("_")[0].split("-")[0]
+    from pystdoc.config import LANGUAGE_CODE_MAP
+
+    if primary in LANGUAGE_CODE_MAP:
+        return LANGUAGE_CODE_MAP[primary]
+    return l_strip.capitalize()
 
 
 def get_code_language(extension: str) -> str:

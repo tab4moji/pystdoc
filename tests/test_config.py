@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from pystdoc.config import (
     _read_json_file,
+    detect_terminal_language,
     get_user_config_path,
     load_config,
 )
@@ -153,6 +154,44 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(
                 p, Path.home() / ".config" / "pystdoc" / "pystdoc.json"
             )
+
+    def test_detect_terminal_language_japanese(self):
+        with patch.dict(os.environ, {"LANG": "ja_JP.UTF-8"}, clear=True):
+            self.assertEqual(detect_terminal_language(), "Japanese")
+
+    def test_detect_terminal_language_priority(self):
+        # LC_ALL > LC_MESSAGES > LANG > LANGUAGE
+        env = {
+            "LANG": "ja_JP.UTF-8",
+            "LC_MESSAGES": "fr_FR.UTF-8",
+            "LC_ALL": "de_DE.UTF-8",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(detect_terminal_language(), "German")
+
+        env2 = {
+            "LANG": "ja_JP.UTF-8",
+            "LC_MESSAGES": "fr_FR.UTF-8",
+        }
+        with patch.dict(os.environ, env2, clear=True):
+            self.assertEqual(detect_terminal_language(), "French")
+
+    def test_detect_terminal_language_c_posix(self):
+        with patch.dict(os.environ, {"LANG": "C"}, clear=True):
+            self.assertEqual(detect_terminal_language(), "English")
+        with patch.dict(os.environ, {"LANG": "POSIX"}, clear=True):
+            self.assertEqual(detect_terminal_language(), "English")
+
+    def test_load_config_defaults_to_terminal_language(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            with patch.dict(os.environ, {"LANG": "ja_JP.UTF-8"}, clear=True):
+                with patch(
+                    "pystdoc.config.get_user_config_path",
+                    return_value=tmp_path / "not_found.json",
+                ):
+                    cfg = load_config(tmp_path)
+                    self.assertEqual(cfg["language"], "Japanese")
 
 
 if __name__ == "__main__":

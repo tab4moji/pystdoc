@@ -473,6 +473,46 @@ class TestCLI(unittest.TestCase):
                 self.assertEqual(cm.exception.code, 0)
                 mock_start.assert_called_once()
 
+    def test_cli_default_language_from_terminal(self):
+        # When --language is NOT specified, terminal language is used
+        test_args = [
+            "docgen",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+        ]
+        with patch.dict("os.environ", {"LANG": "ja_JP.UTF-8"}, clear=False):
+            with patch(
+                "pystdoc.cli.run_docgen", return_value=0
+            ) as mock_docgen:
+                with patch("sys.argv", test_args):
+                    with self.assertRaises(SystemExit) as cm:
+                        docgen_main()
+                    self.assertEqual(cm.exception.code, 0)
+                    mock_docgen.assert_called_once()
+                    _, kwargs = mock_docgen.call_args
+                    self.assertEqual(kwargs.get("language"), "Japanese")
+
+        # When --language IS specified, the explicit argument should be used
+        test_args_explicit = [
+            "docgen",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+            "--language", "French",
+        ]
+        with patch.dict("os.environ", {"LANG": "ja_JP.UTF-8"}, clear=False):
+            with patch(
+                "pystdoc.cli.run_docgen", return_value=0
+            ) as mock_docgen:
+                with patch("sys.argv", test_args_explicit):
+                    with self.assertRaises(SystemExit) as cm:
+                        docgen_main()
+                    self.assertEqual(cm.exception.code, 0)
+                    mock_docgen.assert_called_once()
+                    _, kwargs = mock_docgen.call_args
+                    self.assertEqual(kwargs.get("language"), "French")
+
 
 if __name__ == "__main__":
     unittest.main()

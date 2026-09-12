@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import pystdoc
-from pystdoc.config import load_config
+from pystdoc.config import detect_terminal_language, load_config
 from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
@@ -108,7 +108,7 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
-    lang = args.language or cfg.get("language", "English")
+    lang = args.language or cfg.get("language") or detect_terminal_language()
     concurrency = args.concurrency or cfg.get("concurrency", 1)
     allow_fallback = (
         args.allow_fallback
@@ -214,7 +214,7 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
-    lang = args.language or cfg.get("language", "English")
+    lang = args.language or cfg.get("language") or detect_terminal_language()
     allow_fallback = (
         args.allow_fallback
         if args.allow_fallback is not None
@@ -298,7 +298,7 @@ def run_watch(
     token: Optional[str] = None,
     context_size: int = 16384,
     concurrency: int = 1,
-    language: str = "English",
+    language: Optional[str] = None,
     allow_fallback: bool = False,
     compile_commands: Optional[str] = None,
     interval: float = 1.0,
@@ -306,6 +306,9 @@ def run_watch(
 ) -> int:
     """Run continuous watcher with auto-sync on code change."""
     from pystdoc.watcher import DNotifyWatcher
+
+    if language is None:
+        language = detect_terminal_language()
 
     def _sync_action() -> None:
         ret_docgen = run_docgen(
@@ -649,7 +652,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
-    lang = args.language or cfg.get("language", "English")
+    lang = args.language or cfg.get("language") or detect_terminal_language()
     concurrency = args.concurrency or cfg.get("concurrency", 1)
     allow_fallback = (
         args.allow_fallback
