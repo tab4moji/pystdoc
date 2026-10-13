@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from pystdoc.similarity import is_semantically_same
 from pystdoc.symbols import Symbol
 
 
@@ -71,9 +72,16 @@ class DocgenDB:
                         target_key TEXT PRIMARY KEY,
                         input_hash TEXT NOT NULL,
                         content TEXT NOT NULL,
+                        input_text TEXT,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                try:
+                    self.conn.execute(
+                        "ALTER TABLE design_cache ADD COLUMN input_text TEXT;"
+                    )
+                except Exception:
+                    pass
 
                 self.conn.execute("""
                     CREATE TABLE IF NOT EXISTS symbols_metadata (
@@ -231,41 +239,63 @@ class DocgenDB:
             return None
 
     def load_design_cache(
-        self, target_key: str, current_input_hash: str
+        self,
+        target_key: str,
+        current_input_hash: str,
+        input_text: Optional[str] = None,
+        similarity_threshold: float = 0.85,
     ) -> Optional[str]:
-        """Load cached design document if input hash matches."""
+        """Load cached design document if the input is unchanged.
+
+        Exact hash match is a hit. If ``input_text`` is given, a stored
+        input that is semantically similar (>= threshold) is also a hit,
+        so that wording-only changes do not cascade upward.
+        """
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                SELECT content FROM design_cache
-                WHERE target_key = ? AND input_hash = ?
+                SELECT content, input_hash, input_text FROM design_cache
+                WHERE target_key = ?
             """,
-                (target_key, current_input_hash),
+                (target_key,),
             )
             row = cur.fetchone()
-            if row:
-                return row["content"]
+        if not row:
             return None
+        if row["input_hash"] == current_input_hash:
+            return row["content"]
+        if input_text is not None and row["input_text"]:
+            if is_semantically_same(
+                row["input_text"], input_text, similarity_threshold
+            ):
+                return row["content"]
+        return None
 
     def save_design_cache(
-        self, target_key: str, input_hash: str, content: str
+        self,
+        target_key: str,
+        input_hash: str,
+        content: str,
+        input_text: Optional[str] = None,
     ) -> None:
-        """Save design doc content and input hash with immediate commit."""
+        """Save design doc content, input hash and text (immediate commit)."""
         with self.lock:
             with self.conn:
                 self.conn.execute(
                     """
                     INSERT INTO design_cache (
-                        target_key, input_hash, content, updated_at
+                        target_key, input_hash, content, input_text,
+                        updated_at
                     )
-                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(target_key) DO UPDATE SET
                         input_hash=excluded.input_hash,
                         content=excluded.content,
+                        input_text=excluded.input_text,
                         updated_at=CURRENT_TIMESTAMP;
                 """,
-                    (target_key, input_hash, content),
+                    (target_key, input_hash, content, input_text),
                 )
 
     def save_symbol_metadata(

@@ -456,7 +456,7 @@ def locate_features(target_dir: Path, query: str, limit: int = 10) -> str:
             (
                 uid, sname, skind, rpath,
                 lstart, lend, fqdn, sig,
-                ref_funcs_raw, callees_raw,
+                _ref_funcs_raw, _callees_raw,
                 purp, ovw
             ) = row
             sname_l = (sname or "").lower()

@@ -401,7 +401,6 @@ def create_mcp_server(
 
         # Capture output or format response
         from io import StringIO
-        import sys
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         capture_out = StringIO()
@@ -439,7 +438,6 @@ def create_mcp_server(
             return _missing_docgen_msg(target_dir)
 
         from io import StringIO
-        import sys
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         capture = StringIO()
@@ -547,7 +545,6 @@ def create_mcp_server(
         if not docgen_dir.exists():
             return _missing_docgen_msg(target_dir)
         from io import StringIO
-        import sys
         old_stdout = sys.stdout
         capture = StringIO()
         try:

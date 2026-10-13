@@ -142,7 +142,9 @@ def generate_readme_doc(
     cache_key = f"report::readme::{norm_lang}"
 
     if db and not force and out_file.exists():
-        cached_content = db.load_design_cache(cache_key, input_hash)
+        cached_content = db.load_design_cache(
+            cache_key, input_hash, combined_input
+        )
         if cached_content:
             tracker.advance(1, extra="[Cached]: .pystdoc/README.md")
             tracker.finish()
@@ -347,5 +349,7 @@ topological dependency mapping.
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
-        db.save_design_cache(cache_key, input_hash, content)
+        db.save_design_cache(
+            cache_key, input_hash, content, combined_input
+        )
     return content

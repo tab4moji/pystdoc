@@ -15,8 +15,6 @@ from pystdoc.interrupt import InterruptionState, interruptible_sleep
 class LLMError(RuntimeError):
     """Exception raised when LLM generation fails in strict mode."""
 
-    pass
-
 
 def normalize_host_url(host: Optional[str]) -> str:
     """Normalize user-provided host string into a standard base URL."""
@@ -244,7 +242,8 @@ class LLMClient:
         """Detect WSL default gateway host IP via ip route or resolv.conf."""
         try:
             res = subprocess.run(
-                ["ip", "route"], capture_output=True, text=True, timeout=1
+                ["ip", "route"], capture_output=True, text=True, timeout=1,
+                check=False
             )
             for line in res.stdout.splitlines():
                 if line.startswith("default via"):
@@ -253,7 +252,7 @@ class LLMClient:
             pass
 
         try:
-            resolv = Path("/etc/resolv.conf").read_text()
+            resolv = Path("/etc/resolv.conf").read_text(encoding="utf-8")
             for line in resolv.splitlines():
                 if line.strip().startswith("nameserver"):
                     return line.split()[1].strip()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pystdoc"
-version = "0.7.2"
+version = "0.8.0"
 description = "Python Structural & Topological Documentation Engine (pystdoc): High-precision, LLM-powered hierarchical codebase and architecture documentation generator."
 readme = "README.md"
 authors = [
@@ -50,4 +50,46 @@ where = ["src"]
 filterwarnings = [
     "ignore::ResourceWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.pylint.main]
+# Third-party libs without static member info (javalang) / libclang.
+extension-pkg-allow-list = []
+
+[tool.pylint.messages_control]
+# Intentional design choices of this code base:
+#  - broad-exception-caught: parsers must never crash a whole sync run
+#  - import-outside-toplevel: optional/heavy deps are imported lazily
+#  - complexity/size metrics, duplicate-code, cyclic-import (adapter registry)
+#  - invalid-name: ast.NodeVisitor visit_* methods and module singletons
+disable = [
+    "broad-exception-caught",
+    "import-outside-toplevel",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-return-statements",
+    "too-many-instance-attributes",
+    "too-many-nested-blocks",
+    "too-many-lines",
+    "too-few-public-methods",
+    "duplicate-code",
+    "cyclic-import",
+    "no-else-return",
+    "no-else-break",
+    "invalid-name",
+    "disallowed-name",
+    "global-statement",
+    "protected-access",
+    "unnecessary-ellipsis",
+    "missing-function-docstring",
+    "missing-class-docstring",
+    "missing-module-docstring",
+    "consider-using-with",
+    "attribute-defined-outside-init",
+    "cell-var-from-loop",
+    "unused-argument",
+    "no-member",
 ]

@@ -266,7 +266,7 @@ class PerfProfileManager:
 
             if not coeffs:
                 all_cats = self.data.get(key, {}).get("categories", {})
-                for c_k, c_v in all_cats.items():
+                for c_v in all_cats.values():
                     if c_v.get("coeffs"):
                         coeffs = c_v["coeffs"]
                         break
@@ -300,7 +300,7 @@ class PerfProfileManager:
             chars_coeffs = cat_data.get("chars_coeffs")
             if not chars_coeffs:
                 all_cats = self.data.get(key, {}).get("categories", {})
-                for c_k, c_v in all_cats.items():
+                for c_v in all_cats.values():
                     if c_v.get("chars_coeffs"):
                         chars_coeffs = c_v["chars_coeffs"]
                         break

@@ -58,7 +58,7 @@ def scan_files(target_dir: Path) -> List[Path]:
                 rel_path = file_path.relative_to(target_dir)
                 matched_files.append(rel_path)
 
-    matched_files.sort(key=lambda p: str(p))
+    matched_files.sort(key=str)
     return matched_files
 
 

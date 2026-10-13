@@ -46,6 +46,7 @@ from pystdoc.progress import (
 )
 from pystdoc.interrupt import InterruptionState
 from pystdoc.perf import PerfProfileManager
+from pystdoc.similarity import similarity
 
 
 class FileLock:
@@ -58,7 +59,7 @@ class FileLock:
 
     def __enter__(self):
         self.lock_file.parent.mkdir(parents=True, exist_ok=True)
-        self.fd = open(self.lock_file, "w")
+        self.fd = open(self.lock_file, "w", encoding="utf-8")
         try:
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -130,18 +131,6 @@ def check_external_interface_changed(
     if old_cache is None:
         return True
 
-    def get_tokens(text: Optional[str]) -> Set[str]:
-        clean = re.sub(
-            r"[.,。、:：\-_\(\)（）「」『』`\"'\s\r\n\t]+", " ", text or ""
-        )
-        words = set(clean.lower().split())
-        # Add 2-grams for CJK strings
-        compact = "".join(clean.lower().split())
-        if len(compact) >= 2:
-            for i in range(len(compact) - 1):
-                words.add(compact[i:i+2])
-        return words
-
     def normalize_spec_text(text: Optional[str]) -> str:
         if not text:
             return ""
@@ -160,28 +149,22 @@ def check_external_interface_changed(
     if old_in != new_in or old_out != new_out:
         if bool(old_in) != bool(new_in) or bool(old_out) != bool(new_out):
             return True
-        t_in1 = get_tokens(old_cache.get("inputs_note"))
-        t_in2 = get_tokens(new_sym.inputs_note)
-        if t_in1 and t_in2:
-            jaccard_in = len(t_in1 & t_in2) / max(len(t_in1 | t_in2), 1)
-            if jaccard_in < 0.5:
-                return True
-        t_out1 = get_tokens(old_cache.get("outputs_note"))
-        t_out2 = get_tokens(new_sym.outputs_note)
-        if t_out1 and t_out2:
-            jaccard_out = len(t_out1 & t_out2) / max(len(t_out1 | t_out2), 1)
-            if jaccard_out < 0.5:
-                return True
+        if old_in and new_in and similarity(
+            old_cache.get("inputs_note"), new_sym.inputs_note
+        ) < 0.5:
+            return True
+        if old_out and new_out and similarity(
+            old_cache.get("outputs_note"), new_sym.outputs_note
+        ) < 0.5:
+            return True
 
     # Check purpose
     if old_p == new_p:
         return False
-    t1 = get_tokens(old_cache.get("purpose"))
-    t2 = get_tokens(new_sym.purpose)
-    if t1 and t2:
-        jaccard = len(t1 & t2) / max(len(t1 | t2), 1)
-        if jaccard >= 0.5:
-            return False
+    if old_p and new_p and similarity(
+        old_cache.get("purpose"), new_sym.purpose
+    ) >= 0.5:
+        return False
 
     return True
 
@@ -924,7 +907,7 @@ def run_docgen(
                 )
 
         # Process Level by Level
-        for lvl_idx, lvl_nodes in enumerate(level_groups):
+        for lvl_nodes in level_groups:
             InterruptionState.check_interrupted()
             executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=concurrency,
@@ -1093,18 +1076,18 @@ def run_docgen(
                 parent_container_info is not None
                 and any(
                     t.symbol.name == parent_container_info["name"]
-                    and t.unique_id in changed_upstream_ids
+                    and t.unique_id in interface_changed_symbol_ids
                     for t in type_nodes
                     if t.rel_path == v_rel
                 )
             )
             is_parent_func_updated = (
                 any(
-                    caller_id in changed_upstream_ids
+                    caller_id in interface_changed_symbol_ids
                     for caller_id in v_node.direct_caller_ids
                 )
                 or any(
-                    f_node.unique_id in changed_upstream_ids
+                    f_node.unique_id in interface_changed_symbol_ids
                     for f_node in fn_nodes
                     if f_node.rel_path == v_rel
                     and (
@@ -1182,10 +1165,14 @@ def run_docgen(
                     or top_down_res.get("significance")
                     or top_down_res.get("top_down_summary")
                 )
-                if raw_v_role:
-                    v_sym.top_down_context = sanitize_architectural_context(
-                        raw_v_role, fallback_text=v_sym.purpose or ""
-                    )
+                v_sym.top_down_context = sanitize_architectural_context(
+                    raw_v_role,
+                    fallback_text=(
+                        v_sym.top_down_context
+                        or v_sym.purpose
+                        or v_sym.name
+                    ),
+                )
                 if top_down_res.get("purpose"):
                     v_sym.purpose = top_down_res["purpose"]
                 if top_down_res.get("overview"):

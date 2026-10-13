@@ -169,6 +169,43 @@ def chunk_list_by_size(
     return chunks
 
 
+def chunk_list_stable(
+    items: List[str], max_items: int = 15, max_chars: int = 3500
+) -> List[List[str]]:
+    """Split items into chunks whose boundaries are content-defined.
+
+    A boundary is placed after an item whose hash hits a target value, so
+    inserting/removing/editing one item only changes the chunk(s) around
+    it; the rest of the chunks stay byte-identical (cache friendly).
+    Size limits are still enforced as hard boundaries.
+    """
+    divisor = max(2, max_items // 2)
+    chunks: List[List[str]] = []
+    current_chunk: List[str] = []
+    current_length = 0
+
+    for item in items:
+        item_len = len(item)
+        if current_chunk and (
+            len(current_chunk) >= max_items
+            or current_length + item_len > max_chars
+        ):
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_length = 0
+        current_chunk.append(item)
+        current_length += item_len
+        digest = hashlib.sha1(item.encode("utf-8")).hexdigest()
+        if int(digest[:8], 16) % divisor == 0:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_length = 0
+
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
+
 def hierarchical_reduce_summaries(
     items: List[str],
     category_title: str,
@@ -178,8 +215,15 @@ def hierarchical_reduce_summaries(
     max_items_per_chunk: int = 15,
     max_chars_per_chunk: int = 3500,
     depth: int = 0,
+    db: Optional[DocgenDB] = None,
+    force: bool = False,
 ) -> str:
-    """Recursively reduce descriptions into a concise summary."""
+    """Recursively reduce descriptions into a concise summary.
+
+    When ``db`` is given, each group summary is cached by the hash of its
+    input text, and groups are formed by content-defined chunking. Thus
+    only the groups that contain changed items are sent to the LLM again.
+    """
     if not items:
         return "(None)"
 
@@ -189,15 +233,25 @@ def hierarchical_reduce_summaries(
     ) or depth > 5:
         return "\n".join(items)
 
-    chunks = chunk_list_by_size(
-        items, max_items=max_items_per_chunk, max_chars=max_chars_per_chunk
-    )
+    if db is not None:
+        chunks = chunk_list_stable(
+            sorted(items),
+            max_items=max_items_per_chunk,
+            max_chars=max_chars_per_chunk,
+        )
+    else:
+        chunks = chunk_list_by_size(
+            items,
+            max_items=max_items_per_chunk,
+            max_chars=max_chars_per_chunk,
+        )
     if len(chunks) <= 1 and depth > 0:
         return "\n".join(items)
 
     intermediate_summaries: List[str] = []
 
     for idx, chunk in enumerate(chunks, 1):
+        InterruptionState.check_interrupted()
         chunk_text = "\n".join(chunk)
         if not llm_client:
             summary_item = (
@@ -206,6 +260,26 @@ def hierarchical_reduce_summaries(
             )
             intermediate_summaries.append(summary_item)
             continue
+
+        group_cache_key = ""
+        group_hash = ""
+        if db is not None:
+            group_hash = hashlib.sha256(
+                f"{language}\n{category_title}\n{chunk_text}".encode("utf-8")
+            ).hexdigest()
+            group_cache_key = (
+                f"reduce::{language}::{category_title}::{group_hash}"
+            )
+            if not force:
+                cached_summary = db.load_design_cache(
+                    group_cache_key, group_hash
+                )
+                if cached_summary:
+                    # Header without index keeps upper levels stable.
+                    intermediate_summaries.append(
+                        f"#### Group Summary\n{cached_summary.strip()}"
+                    )
+                    continue
 
         grp_info = f"(Group {idx}/{len(chunks)})"
         prompt = f"""Please analyze {category_title} {grp_info}
@@ -231,9 +305,17 @@ Output as Markdown bullet points in {language}:"""
 
         try:
             summary = llm_client.chat_completion(messages)
-            intermediate_summaries.append(
-                f"#### Group {idx} Summary\n{summary.strip()}"
-            )
+            if db is not None:
+                db.save_design_cache(
+                    group_cache_key, group_hash, summary.strip()
+                )
+                intermediate_summaries.append(
+                    f"#### Group Summary\n{summary.strip()}"
+                )
+            else:
+                intermediate_summaries.append(
+                    f"#### Group {idx} Summary\n{summary.strip()}"
+                )
         except Exception as e:
             if not allow_fallback:
                 raise LLMError(
@@ -257,6 +339,8 @@ Output as Markdown bullet points in {language}:"""
             max_items_per_chunk=max_items_per_chunk,
             max_chars_per_chunk=max_chars_per_chunk,
             depth=depth + 1,
+            db=db,
+            force=force,
         )
 
     return "\n\n".join(intermediate_summaries)
@@ -292,7 +376,9 @@ def generate_data_models_doc(
     out_file = target_dir / ".pystdoc" / "design" / "data_models.md"
 
     if db and not force and out_file.exists():
-        cached_content = db.load_design_cache(cache_key, input_hash)
+        cached_content = db.load_design_cache(
+            cache_key, input_hash, combined_input
+        )
         if cached_content:
             if tracker:
                 tracker.advance(1, extra="[Cached]: data_models.md")
@@ -305,20 +391,37 @@ def generate_data_models_doc(
     if tracker:
         tracker.render_current(extra="data_models.md")
 
-    reduced_types_summary = hierarchical_reduce_summaries(
-        types_raw,
-        "Type Definitions",
-        llm_client,
-        language=norm_lang,
-        allow_fallback=allow_fallback,
-    )
-    reduced_vars_summary = hierarchical_reduce_summaries(
-        vars_raw,
-        "Variables and Fields",
-        llm_client,
-        language=norm_lang,
-        allow_fallback=allow_fallback,
-    )
+    total_types_len = sum(len(it) for it in types_raw)
+    if total_types_len <= 15000 or len(types_raw) <= 50:
+        reduced_types_summary = "\n".join(types_raw) if types_raw else "(None)"
+    else:
+        reduced_types_summary = hierarchical_reduce_summaries(
+            types_raw,
+            "Type Definitions",
+            llm_client,
+            language=norm_lang,
+            allow_fallback=allow_fallback,
+            max_items_per_chunk=30,
+            max_chars_per_chunk=8000,
+            db=db,
+            force=force,
+        )
+
+    total_vars_len = sum(len(it) for it in vars_raw)
+    if total_vars_len <= 15000 or len(vars_raw) <= 50:
+        reduced_vars_summary = "\n".join(vars_raw) if vars_raw else "(None)"
+    else:
+        reduced_vars_summary = hierarchical_reduce_summaries(
+            vars_raw,
+            "Variables and Fields",
+            llm_client,
+            language=norm_lang,
+            allow_fallback=allow_fallback,
+            max_items_per_chunk=30,
+            max_chars_per_chunk=8000,
+            db=db,
+            force=force,
+        )
 
     prompt = f"""Please analyze aggregated types and variables/fields,
 and create a factual "Data Models & Data Structure Design" doc in {norm_lang}.
@@ -405,8 +508,46 @@ Structure the Markdown as follows:
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
-        db.save_design_cache(cache_key, input_hash, content)
+        db.save_design_cache(
+            cache_key, input_hash, content, combined_input
+        )
     return content
+
+
+def select_architectural_functions(
+    fn_docs: List[Dict[str, Any]], max_count: int = 60
+) -> List[Dict[str, Any]]:
+    """Select key architectural functions (entry points, pipelines).
+
+    Instead of passing hundreds of utility/test/leaf functions, we prioritize:
+    1. Functions with 'main', 'cli', 'run', 'start', 'handler', 'app', 'serve'.
+    2. Functions with UI interaction roles.
+    3. Functions that call many others (pipeline orchestrators).
+    4. Functions with no callers inside the project (root entry points).
+    """
+    if len(fn_docs) <= max_count:
+        return fn_docs
+
+    def score(d: Dict[str, Any]) -> int:
+        fname = d["file_name"].lower()
+        s = 0
+        if any(
+            k in fname
+            for k in (
+                "main", "cli", "run", "start", "handler", "app", "serve",
+                "pipeline", "engine", "orchestrat"
+            )
+        ):
+            s += 20
+        if d.get("ui_role"):
+            s += 15
+        s += len(d.get("callees") or []) * 2
+        if not d.get("referencing_funcs"):
+            s += 5
+        return s
+
+    scored = sorted(fn_docs, key=score, reverse=True)
+    return scored[:max_count]
 
 
 def generate_execution_model_doc(
@@ -420,11 +561,15 @@ def generate_execution_model_doc(
     ui_info: Optional[Dict[str, Any]] = None,
     tracker: Optional[PhaseProgressTracker] = None,
 ) -> str:
-    """Step 2: Generate execution_model.md with SQLite cache & Map-Reduce."""
+    """Step 2: Generate execution_model.md with filtered functions."""
     norm_lang = normalize_language(language)
+
+    # 1. Filter to core entry points and high-level callers
+    arch_funcs = select_architectural_functions(fn_docs, max_count=60)
+
     funcs_raw = []
-    for d in fn_docs:
-        callees_str = ", ".join(d["callees"][:3]) if d["callees"] else "None"
+    for d in arch_funcs:
+        callees_str = ", ".join(d["callees"][:4]) if d["callees"] else "None"
         ui_extra = f" / UI Role: {d['ui_role']}" if d.get("ui_role") else ""
         line_desc = (
             f"- Function `{d['file_name']}` (Signature: `{d['signature']}`): "
@@ -438,7 +583,9 @@ def generate_execution_model_doc(
     out_file = target_dir / ".pystdoc" / "design" / "execution_model.md"
 
     if db and not force and out_file.exists():
-        cached_content = db.load_design_cache(cache_key, input_hash)
+        cached_content = db.load_design_cache(
+            cache_key, input_hash, combined_input
+        )
         if cached_content:
             if tracker:
                 tracker.advance(
@@ -453,13 +600,22 @@ def generate_execution_model_doc(
     if tracker:
         tracker.render_current(extra="execution_model.md")
 
-    reduced_funcs_summary = hierarchical_reduce_summaries(
-        funcs_raw,
-        "Function Call Structures",
-        llm_client,
-        language=norm_lang,
-        allow_fallback=allow_fallback,
-    )
+    # If items fit comfortably in a single LLM context, directly use them
+    total_raw_len = sum(len(it) for it in funcs_raw)
+    if total_raw_len <= 18000 or len(funcs_raw) <= 60:
+        reduced_funcs_summary = "\n".join(funcs_raw)
+    else:
+        reduced_funcs_summary = hierarchical_reduce_summaries(
+            funcs_raw,
+            "Function Call Structures",
+            llm_client,
+            language=norm_lang,
+            allow_fallback=allow_fallback,
+            max_items_per_chunk=30,
+            max_chars_per_chunk=8000,
+            db=db,
+            force=force,
+        )
 
     ui_context_text = ""
     if ui_info and ui_info.get("has_ui"):
@@ -554,7 +710,9 @@ Structure the Markdown as follows:
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
-        db.save_design_cache(cache_key, input_hash, content)
+        db.save_design_cache(
+            cache_key, input_hash, content, combined_input
+        )
     return content
 
 
@@ -592,7 +750,9 @@ def generate_module_docs(
         )
 
         if db and not force and out_file.exists():
-            cached_content = db.load_design_cache(cache_key, input_hash)
+            cached_content = db.load_design_cache(
+                cache_key, input_hash, combined_input
+            )
             if cached_content:
                 if tracker:
                     tracker.advance(
@@ -615,6 +775,8 @@ def generate_module_docs(
             llm_client,
             language=norm_lang,
             allow_fallback=allow_fallback,
+            db=db,
+            force=force,
         )
 
         prompt = f"""Please analyze elements in module `{mod_name}`
@@ -700,7 +862,9 @@ Structure the Markdown as follows:
 
         write_flushed_text(out_file, content.strip() + "\n")
         if db:
-            db.save_design_cache(cache_key, input_hash, content)
+            db.save_design_cache(
+                cache_key, input_hash, content, combined_input
+            )
         module_summaries[mod_name] = content
 
     return module_summaries
@@ -740,7 +904,9 @@ def generate_overview_doc(
     out_file = target_dir / ".pystdoc" / "design" / "overview.md"
 
     if db and not force and out_file.exists():
-        cached_content = db.load_design_cache(cache_key, input_hash)
+        cached_content = db.load_design_cache(
+            cache_key, input_hash, combined_input
+        )
         if cached_content:
             if tracker:
                 tracker.advance(1, extra="[Cached]: overview.md")
@@ -758,6 +924,8 @@ def generate_overview_doc(
         llm_client,
         language=norm_lang,
         allow_fallback=allow_fallback,
+        db=db,
+        force=force,
     )
 
     ui_overview_text = ""
@@ -852,7 +1020,9 @@ Requirements:
 
     write_flushed_text(out_file, content.strip() + "\n")
     if db:
-        db.save_design_cache(cache_key, input_hash, content)
+        db.save_design_cache(
+            cache_key, input_hash, content, combined_input
+        )
     return content
 
 
