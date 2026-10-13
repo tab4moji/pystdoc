@@ -49,21 +49,25 @@ your_project/
    - Evaluates call graphs in $O(V+E)$ linear time.
    - Automatically breaks cyclic mutual recursions and organizes code symbols into dependency-safe execution levels.
    - Level-by-level parallel LLM execution guarantees context-rich bottom-up summaries without race conditions.
-2. **3-in-1 Unified Documentation Pipeline**:
+2. **High-Speed Incremental Sync & Semantic Change Propagation (v0.8.0)**:
+   - **Selective Bottom-Up Propagation**: Detects AST and logic-level code differences. If regenerated specifications remain semantically unchanged (evaluated by deterministic Jaccard / token-overlap metrics), change propagation terminates immediately without triggering cascading LLM re-analysis across upper modules.
+   - **Content-Defined Map-Reduce Caching**: Intermediate summaries in architecture synthesis (`designgen`) are chunked using stable hash boundaries and cached per group in SQLite, ensuring that only groups containing edited functions are re-summarized.
+   - **Architectural Entry-Point Filtering**: For system execution modeling (`execution_model.md`), key architectural functions (entry points, CLI routers, and core dispatchers) are automatically filtered and passed directly into the LLM context, bypassing heavy multi-step Map-Reduce loops and speeding up generation by up to 90%+.
+3. **3-in-1 Unified Documentation Pipeline**:
    - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.pystdoc/documents/`).
    - `designgen`: Map-Reduce architectural synthesis (`.pystdoc/design/`).
    - `reportgen` / `pystdoc`: Executive summary README (`.pystdoc/README.md`) answering *"What does this project actually do?"*
-3. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
+4. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
    - **C/C++**: `compile_commands.json` integration, include path resolution, and macro expansion via `libclang`.
    - **Java / Kotlin**: AST parsing via `javalang` & `kopyt` with class hierarchy, companion objects, and data classes.
    - **Python & Shell**: AST visitor and generic regex parser with import/call extraction.
    - **Fully Qualified Domain Names (FQDN)**: Disambiguates identical symbol names across large monorepos.
-4. **Feature Location & UI Component Pinpointing (`locate` / `pystdoc_locate_feature`)**:
+5. **Feature Location & UI Component Pinpointing (`locate` / `pystdoc_locate_feature`)**:
    - Pinpoint exact files, functions, UI elements, and line ranges (`Lines X-Y`) from high-level natural language queries (e.g., *"where is the debug notification button"*, *"add auth header"*) without running brute-force `Glob`/`Grep` across the entire project.
    - Built-in multi-lingual token scoring with automatic boosting for UI elements (`@Composable`, `Button`, `Dialog`, `Activity`, `Modifier`, etc.).
-5. **Impact & Inbound/Outbound Dependency Analysis (`impact` / `pystdoc_trace_impact`)**:
+6. **Impact & Inbound/Outbound Dependency Analysis (`impact` / `pystdoc_trace_impact`)**:
    - Instant 360-degree dependency tracing: inspect where a symbol is called from (*Inbound Callers / References*) and what it uses (*Outbound Dependencies*) before making breaking code changes or deletions.
-6. **Standard LLM Options & Multi-Language Support**:
+7. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
    - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (defaults to terminal language, e.g. `Japanese`, `English`, `日本語`).
 
