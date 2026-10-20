@@ -3,6 +3,7 @@
 
 import json
 import os
+from pathlib import Path
 import unittest
 import urllib.error
 from unittest.mock import patch, MagicMock
@@ -10,9 +11,11 @@ from unittest.mock import patch, MagicMock
 from pystdoc.llm_client import (
     LLMClient,
     LLMError,
+    extract_json_from_text,
+    is_debug_mode,
     normalize_host_url,
     normalize_llm_json_dict,
-    extract_json_from_text,
+    set_debug_mode,
 )
 
 
@@ -421,6 +424,148 @@ class TestLLMClient(unittest.TestCase):
                         [{"role": "user", "content": "test"}], max_retries=2
                     )
                 self.assertTrue(mock_sleep.called)
+
+    def test_default_max_tokens_16k(self):
+        with patch(
+            "pystdoc.llm_client.LLMClient.ensure_reachable", return_value=True
+        ):
+            client = LLMClient("http://localhost:11434")
+            self.assertEqual(client.max_tokens, 16384)
+            self.assertEqual(client.context_size, 16384)
+
+            # Explicit override
+            client_custom = LLMClient(
+                "http://localhost:11434", max_tokens=8192
+            )
+            self.assertEqual(client_custom.max_tokens, 8192)
+
+            # Environment variable override
+            with patch.dict(os.environ, {"LLM_MAX_TOKENS": "4096"}):
+                client_env = LLMClient("http://localhost:11434")
+                self.assertEqual(client_env.max_tokens, 4096)
+
+    def test_chat_completion_payload_max_tokens(self):
+        with patch(
+            "pystdoc.llm_client.LLMClient.ensure_reachable", return_value=True
+        ):
+            client = LLMClient("http://localhost:11434")
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}
+        ).encode("utf-8")
+        mock_resp.readline.side_effect = [
+            b'data: {"choices": [{"delta": {"content": "ok"}}]}\n',
+            b'data: [DONE]\n',
+            b"",
+        ]
+
+        sent_payloads = []
+
+        def fake_urlopen(req, timeout=None):
+            sent_payloads.append(json.loads(req.data.decode("utf-8")))
+            return mock_resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            res = client.chat_completion([{"role": "user", "content": "hi"}])
+            self.assertEqual(res, "ok")
+            self.assertEqual(len(sent_payloads), 1)
+            self.assertEqual(sent_payloads[0]["max_tokens"], 16384)
+
+    def test_extract_json_from_text_truncated_repair(self):
+        # Truncated without closing quote and brace
+        truncated_1 = '{"purpose": "calculate blur", "overview": "smoothing'
+        res1 = extract_json_from_text(truncated_1)
+        self.assertEqual(res1["purpose"], "calculate blur")
+        self.assertEqual(res1["overview"], "smoothing")
+
+        # Truncated with missing closing brace only
+        truncated_2 = '{"purpose": "test", "inputs": "x, y"'
+        res2 = extract_json_from_text(truncated_2)
+        self.assertEqual(res2["purpose"], "test")
+        self.assertEqual(res2["inputs"], "x, y")
+
+    def test_chat_completion_realtime_debug_logging(self):
+        with patch(
+            "pystdoc.llm_client.LLMClient.ensure_reachable", return_value=True
+        ):
+            client = LLMClient("http://localhost:11434")
+
+        mock_resp = MagicMock()
+        mock_resp.readline.side_effect = [
+            b'data: {"choices": [{"delta": {"content": "Hello "}}]}\n',
+            b'data: {"choices": [{"delta": {"content": "World!"}}]}\n',
+            b'data: [DONE]\n',
+            b"",
+        ]
+
+        import tempfile
+        with tempfile.NamedTemporaryFile("w+", delete=False) as tf:
+            temp_log_path = Path(tf.name)
+
+        try:
+            # 1. When debug mode is disabled (default): no log written
+            set_debug_mode(False)
+            self.assertFalse(is_debug_mode())
+            with patch("pystdoc.llm_client.DEBUG_LOG_PATH", temp_log_path):
+                with patch("urllib.request.urlopen", return_value=mock_resp):
+                    res = client.chat_completion(
+                        [{"role": "user", "content": "Say hello"}],
+                        stream=True,
+                    )
+                    self.assertEqual(res, "Hello World!")
+            self.assertEqual(temp_log_path.read_text(encoding="utf-8"), "")
+
+            # 2. When debug mode is enabled (--debug): logs written in realtime
+            set_debug_mode(True)
+            self.assertTrue(is_debug_mode())
+            mock_resp.readline.side_effect = [
+                b'data: {"choices": [{"delta": {"content": "Hello "}}]}\n',
+                b'data: {"choices": [{"delta": {"content": "World!"}}]}\n',
+                b'data: [DONE]\n',
+                b"",
+            ]
+            with patch("pystdoc.llm_client.DEBUG_LOG_PATH", temp_log_path):
+                with patch("urllib.request.urlopen", return_value=mock_resp):
+                    res = client.chat_completion(
+                        [{"role": "user", "content": "Say hello"}],
+                        stream=True,
+                    )
+                    self.assertEqual(res, "Hello World!")
+
+            log_content = temp_log_path.read_text(encoding="utf-8")
+            self.assertIn(">>> LLM REQUEST", log_content)
+            self.assertIn("--- [user] ---", log_content)
+            self.assertIn("Say hello", log_content)
+            self.assertIn("<<< LLM RESPONSE STREAM START:", log_content)
+            self.assertIn("Hello World!", log_content)
+            self.assertIn("<<< LLM RESPONSE END", log_content)
+        finally:
+            set_debug_mode(False)
+            if temp_log_path.exists():
+                temp_log_path.unlink()
+
+    def test_chat_completion_whitespace_loop_abort(self):
+        with patch(
+            "pystdoc.llm_client.LLMClient.ensure_reachable", return_value=True
+        ):
+            client = LLMClient("http://localhost:11434")
+
+        mock_resp = MagicMock()
+        # 60 whitespace characters consecutively
+        mock_resp.readline.side_effect = (
+            [b'data: {"choices": [{"delta": {"content": "   "}}]}\n'] * 25
+            + [b""]
+        )
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with self.assertRaises(LLMError) as ctx:
+                client.chat_completion(
+                    [{"role": "user", "content": "hi"}],
+                    max_retries=1,
+                    stream=True,
+                )
+            self.assertIn("whitespace loop detected", str(ctx.exception))
 
 
 if __name__ == "__main__":

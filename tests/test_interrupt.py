@@ -228,6 +228,46 @@ class TestGracefulInterruptionInEngines(unittest.TestCase):
                 designgen_main(["--dir", str(self.test_dir), "--no-llm"])
             self.assertEqual(cm.exception.code, 130)
 
+    def test_docgen_resumes_from_cache_after_partial_run(self):
+        """Verify that when expected_file_doc does not exist yet,
+        existing SQLite cache for symbols is preserved and reused.
+        """
+        from pystdoc.db import DocgenDB
+
+        db_path = self.test_dir / ".pystdoc" / "index.db"
+        db = DocgenDB(db_path)
+        cache_payload = {
+            "purpose": "Cached calculation of sum.",
+            "inputs_note": "int a, int b",
+            "outputs_note": "sum",
+            "overview": "Overview from cache",
+            "top_down_context": "Top-down context",
+        }
+        sym_id = "src/sample.c::fn.add"
+        db.save_symbol_cache(sym_id, cache_payload)
+        db.save_symbol_cache(f"{sym_id}::English", cache_payload)
+        db.close()
+
+        # Delete whole-file document to simulate abort before step 5
+        doc_dir = self.test_dir / ".pystdoc" / "documents" / "src"
+        whole_doc = doc_dir / "sample.c.md"
+        if whole_doc.exists():
+            whole_doc.unlink()
+
+        # Run docgen with mock LLM client to ensure explain is NOT called
+        with patch("pystdoc.engine.LLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.check_availability.return_value = True
+            mock_client_cls.return_value = mock_client
+            ret = run_docgen(
+                target_dir=self.test_dir,
+                use_llm=True,
+                allow_fallback=True,
+                language="English",
+            )
+            self.assertEqual(ret, 0)
+            mock_client.explain_symbol.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

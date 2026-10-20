@@ -60,6 +60,7 @@ class MCPWatcherManager:
                     model = cfg.get("model")
                     token = cfg.get("token")
                     ctx_size = cfg.get("context_size", 16384)
+                    max_tokens = cfg.get("max_tokens", 16384)
                     workers = cfg.get("concurrency", 1)
                     fallback = cfg.get("allow_fallback", False)
 
@@ -78,6 +79,7 @@ class MCPWatcherManager:
                         model=model,
                         token=token,
                         context_size=ctx_size,
+                        max_tokens=max_tokens,
                         concurrency=workers,
                         language=lang,
                         allow_fallback=fallback,
@@ -90,6 +92,7 @@ class MCPWatcherManager:
                         model=model,
                         token=token,
                         context_size=ctx_size,
+                        max_tokens=max_tokens,
                         language=lang,
                         allow_fallback=fallback,
                     )
@@ -100,6 +103,7 @@ class MCPWatcherManager:
                         model=model,
                         token=token,
                         context_size=ctx_size,
+                        max_tokens=max_tokens,
                     )
                     if client.check_availability():
                         llm_client = client
@@ -580,6 +584,7 @@ def create_mcp_server(
         model = cfg.get("model")
         token = cfg.get("token")
         ctx_size = cfg.get("context_size", 16384)
+        max_tokens = cfg.get("max_tokens", 16384)
         workers = cfg.get("concurrency", 1)
         fallback = cfg.get("allow_fallback", False)
 
@@ -592,6 +597,7 @@ def create_mcp_server(
                 model=model,
                 token=token,
                 context_size=ctx_size,
+                max_tokens=max_tokens,
                 concurrency=workers,
                 language=lang,
                 allow_fallback=fallback,
@@ -614,6 +620,7 @@ def create_mcp_server(
                 model=model,
                 token=token,
                 context_size=ctx_size,
+                max_tokens=max_tokens,
                 language=lang,
                 allow_fallback=fallback,
             )
@@ -628,6 +635,7 @@ def create_mcp_server(
                     model=model,
                     token=token,
                     context_size=ctx_size,
+                    max_tokens=max_tokens,
                 )
                 if client.check_availability():
                     llm_client = client

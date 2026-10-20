@@ -58,6 +58,7 @@ def generate_readme_doc(
     design_dir = docgen_dir / "design"
     docs_dir = docgen_dir / "documents"
     out_file = docgen_dir / "README.md"
+    proj_name = target_dir.name or "Project"
 
     # 1. Read design overview
 
@@ -164,8 +165,12 @@ def generate_readme_doc(
         "'〜と思われる')."
     )
 
-    turn1_prompt = f"""We are analyzing a codebase. Below are excerpts
+    turn1_prompt = f"""We are analyzing a codebase for project \
+'{proj_name}'. Below are excerpts
 from architectural models, module summaries, and bottom-up UI annotations.
+
+### Project Context:
+- Project Name: `{proj_name}`
 
 ### Architecture Overview (Excerpt):
 {overview_text[:800]}
@@ -187,9 +192,11 @@ Answer these 3 factual questions definitively in {norm_lang}
 1. **Software Classification (Application vs Library)**:
    - State definitively whether this is an Application or a Library.
    - If it is an Application, specify the exact user interface presence:
-     GUI, TUI, or CLI.
+     CLI, TUI, or GUI. Prioritize CLI if arguments, entry scripts, or
+     'cli' in project names exist. Never invent unmentioned GUI frameworks
+     (such as JavaFX or Swing).
 2. **Implementation Status & Role**: What is the factual role and state of
-   the code (e.g. CLI tool, Android GUI app, backend library)?
+   the code (e.g. CLI tool, backend library, command pipeline)?
 3. **Core Functionality**: In plain terms, what does it actually do with
    inputs and outputs? (1 assertive sentence)
 """
@@ -237,15 +244,22 @@ Answer these 3 factual questions definitively in {norm_lang}
         "- [**Symbol & Source Code Index**](documents/)\n"
     )
 
-    proj_name = target_dir.name or "Project"
     inferred_type = "Software Module / Application"
-    if any(
+    if (
+        "cli" in proj_name.lower()
+        or "CLI" in overview_text
+        or "main(" in overview_text
+        or "`CLI`" in ui_snippets_str
+    ):
+        inferred_type = "CLI Application"
+    elif any(
         k in ui_snippets_str
-        for k in ("Activity", "Compose", "Android", "GUI", "View")
+        for k in (
+            "Activity", "QMainWindow", "Tkinter", "PyQt", "PySide",
+            "GtkWindow", "wxWidgets", "Jetpack Compose", "GUI"
+        )
     ):
         inferred_type = "GUI Application"
-    elif "CLI" in overview_text or "main(" in overview_text:
-        inferred_type = "CLI Application"
     elif module_files:
         inferred_type = "Library / Module Package"
 
@@ -289,7 +303,14 @@ topological dependency mapping.
                 {"role": "system", "content": sys_msg},
                 {"role": "user", "content": turn1_prompt},
             ]
-            ans1 = llm_client.chat_completion(msg1)
+            cb1 = (
+                (lambda p, c: tracker.spin(
+                    extra=f"Analyzing essence (Turn 1/3, {c} chars)",
+                )) if tracker else None
+            )
+            ans1 = llm_client.chat_completion(msg1, on_chunk=cb1)
+            if tracker:
+                tracker.toggle_spinner_direction()
 
             InterruptionState.check_interrupted()
             # Turn 2: Typical usage and execution flow
@@ -299,7 +320,14 @@ topological dependency mapping.
                 {"role": "assistant", "content": ans1},
                 {"role": "user", "content": turn2_prompt},
             ]
-            ans2 = llm_client.chat_completion(msg2)
+            cb2 = (
+                (lambda p, c: tracker.spin(
+                    extra=f"Analyzing execution (Turn 2/3, {c} chars)",
+                )) if tracker else None
+            )
+            ans2 = llm_client.chat_completion(msg2, on_chunk=cb2)
+            if tracker:
+                tracker.toggle_spinner_direction()
 
             InterruptionState.check_interrupted()
             # Turn 3: Final executive README synthesis
@@ -311,7 +339,12 @@ topological dependency mapping.
                 {"role": "assistant", "content": ans2},
                 {"role": "user", "content": turn3_prompt},
             ]
-            content = llm_client.chat_completion(msg3)
+            cb3 = (
+                (lambda p, c: tracker.spin(
+                    extra=f"Synthesizing README (Turn 3/3, {c} chars)",
+                )) if tracker else None
+            )
+            content = llm_client.chat_completion(msg3, on_chunk=cb3)
         else:
             content = default_readme
     except KeyboardInterrupt:

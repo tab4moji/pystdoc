@@ -217,6 +217,7 @@ def hierarchical_reduce_summaries(
     depth: int = 0,
     db: Optional[DocgenDB] = None,
     force: bool = False,
+    tracker: Optional[PhaseProgressTracker] = None,
 ) -> str:
     """Recursively reduce descriptions into a concise summary.
 
@@ -303,8 +304,21 @@ Output as Markdown bullet points in {language}:"""
             {"role": "user", "content": prompt},
         ]
 
+        if tracker:
+            tracker.toggle_spinner_direction()
+        cb = (
+            (lambda p, c: tracker.spin(
+                extra=f"Summarizing {category_title} {grp_info} ({c} chars)"
+            ))
+            if tracker
+            else None
+        )
+
         try:
-            summary = llm_client.chat_completion(messages)
+            if cb:
+                summary = llm_client.chat_completion(messages, on_chunk=cb)
+            else:
+                summary = llm_client.chat_completion(messages)
             if db is not None:
                 db.save_design_cache(
                     group_cache_key, group_hash, summary.strip()
@@ -341,6 +355,7 @@ Output as Markdown bullet points in {language}:"""
             depth=depth + 1,
             db=db,
             force=force,
+            tracker=tracker,
         )
 
     return "\n\n".join(intermediate_summaries)
@@ -405,6 +420,7 @@ def generate_data_models_doc(
             max_chars_per_chunk=8000,
             db=db,
             force=force,
+            tracker=tracker,
         )
 
     total_vars_len = sum(len(it) for it in vars_raw)
@@ -421,6 +437,7 @@ def generate_data_models_doc(
             max_chars_per_chunk=8000,
             db=db,
             force=force,
+            tracker=tracker,
         )
 
     prompt = f"""Please analyze aggregated types and variables/fields,
@@ -468,12 +485,23 @@ Structure the Markdown as follows:
         {"role": "user", "content": prompt},
     ]
 
+    if tracker:
+        tracker.toggle_spinner_direction()
+    cb = (
+        (lambda p, c: tracker.spin(
+            extra=f"Generating data_models.md ({c} chars)"
+        ))
+        if tracker
+        else None
+    )
+
     try:
-        content = (
-            llm_client.chat_completion(messages)
-            if llm_client
-            else default_data_models
-        )
+        if not llm_client:
+            content = default_data_models
+        elif cb:
+            content = llm_client.chat_completion(messages, on_chunk=cb)
+        else:
+            content = llm_client.chat_completion(messages)
     except Exception as e:
         if not allow_fallback:
             raise LLMError(
@@ -615,6 +643,7 @@ def generate_execution_model_doc(
             max_chars_per_chunk=8000,
             db=db,
             force=force,
+            tracker=tracker,
         )
 
     ui_context_text = ""
@@ -670,12 +699,23 @@ Structure the Markdown as follows:
         {"role": "user", "content": prompt},
     ]
 
+    if tracker:
+        tracker.toggle_spinner_direction()
+    cb = (
+        (lambda p, c: tracker.spin(
+            extra=f"Generating execution_model.md ({c} chars)"
+        ))
+        if tracker
+        else None
+    )
+
     try:
-        content = (
-            llm_client.chat_completion(messages)
-            if llm_client
-            else default_exec_model
-        )
+        if not llm_client:
+            content = default_exec_model
+        elif cb:
+            content = llm_client.chat_completion(messages, on_chunk=cb)
+        else:
+            content = llm_client.chat_completion(messages)
     except Exception as e:
         if not allow_fallback:
             raise LLMError(
@@ -777,6 +817,7 @@ def generate_module_docs(
             allow_fallback=allow_fallback,
             db=db,
             force=force,
+            tracker=tracker,
         )
 
         prompt = f"""Please analyze elements in module `{mod_name}`
@@ -822,12 +863,23 @@ Structure the Markdown as follows:
             {"role": "user", "content": prompt},
         ]
 
+        if tracker:
+            tracker.toggle_spinner_direction()
+        cb = (
+            (lambda p, c, m=mod_name: tracker.spin(
+                extra=f"Generating modules/{m}.md ({c} chars)"
+            ))
+            if tracker
+            else None
+        )
+
         try:
-            content = (
-                llm_client.chat_completion(messages)
-                if llm_client
-                else default_mod_doc
-            )
+            if not llm_client:
+                content = default_mod_doc
+            elif cb:
+                content = llm_client.chat_completion(messages, on_chunk=cb)
+            else:
+                content = llm_client.chat_completion(messages)
         except Exception as e:
             if not allow_fallback:
                 raise LLMError(
@@ -926,6 +978,7 @@ def generate_overview_doc(
         allow_fallback=allow_fallback,
         db=db,
         force=force,
+        tracker=tracker,
     )
 
     ui_overview_text = ""
@@ -980,12 +1033,23 @@ Requirements:
         {"role": "user", "content": prompt},
     ]
 
+    if tracker:
+        tracker.toggle_spinner_direction()
+    cb = (
+        (lambda p, c: tracker.spin(
+            extra=f"Generating overview.md ({c} chars)"
+        ))
+        if tracker
+        else None
+    )
+
     try:
-        content = (
-            llm_client.chat_completion(messages)
-            if llm_client
-            else default_overview
-        )
+        if not llm_client:
+            content = default_overview
+        elif cb:
+            content = llm_client.chat_completion(messages, on_chunk=cb)
+        else:
+            content = llm_client.chat_completion(messages)
     except Exception as e:
         if not allow_fallback:
             raise LLMError(
@@ -1036,6 +1100,7 @@ def run_design_generation(
     token: Optional[str] = None,
     api_key: Optional[str] = None,
     context_size: int = 16384,
+    max_tokens: int = 16384,
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
@@ -1078,6 +1143,7 @@ def run_design_generation(
             model=model,
             token=token or api_key,
             context_size=context_size,
+            max_tokens=max_tokens,
         )
         if client.check_availability():
             llm_client = client
@@ -1107,7 +1173,7 @@ def run_design_generation(
     # Bottom-up UI inference & symbol doc annotation
     ui_info = detect_ui_type(parsed_docs)
     annotated = annotate_documents_with_ui_context(
-        docs_dir, ui_info, language=norm_lang
+        docs_dir, ui_info, language=norm_lang, force=force
     )
     if annotated > 0:
         parsed_docs = [

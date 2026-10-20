@@ -127,15 +127,13 @@ class DocgenDB:
                     )
             return is_changed
 
-    def update_symbol_hash(
+    def check_symbol_hash_changed(
         self,
         unique_id: str,
-        rel_path: str,
         current_sym_hash: str,
         current_logic_hash: Optional[str] = None,
     ) -> Tuple[bool, bool]:
-        """Update symbol hashes and return (is_full_changed,
-        is_logic_changed)."""
+        """Check if symbol hashes changed without updating SQLite DB."""
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
@@ -160,31 +158,55 @@ class DocgenDB:
             else:
                 is_logic_changed = is_full_changed
 
-            if is_full_changed or (
-                current_logic_hash is not None
-                and previous_logic != current_logic_hash
-            ):
-                with self.conn:
-                    self.conn.execute(
-                        """
-                        INSERT INTO symbol_hashes (
-                            unique_id, rel_path, symbol_hash,
-                            logic_hash, updated_at
-                        )
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(unique_id) DO UPDATE SET
-                            symbol_hash=excluded.symbol_hash,
-                            logic_hash=excluded.logic_hash,
-                            updated_at=CURRENT_TIMESTAMP;
-                    """,
-                        (
-                            unique_id,
-                            rel_path,
-                            current_sym_hash,
-                            current_logic_hash,
-                        ),
-                    )
             return is_full_changed, is_logic_changed
+
+    def save_symbol_hash(
+        self,
+        unique_id: str,
+        rel_path: str,
+        current_sym_hash: str,
+        current_logic_hash: Optional[str] = None,
+    ) -> None:
+        """Save symbol hashes to SQLite with immediate commit."""
+        with self.lock:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    INSERT INTO symbol_hashes (
+                        unique_id, rel_path, symbol_hash,
+                        logic_hash, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(unique_id) DO UPDATE SET
+                        symbol_hash=excluded.symbol_hash,
+                        logic_hash=excluded.logic_hash,
+                        updated_at=CURRENT_TIMESTAMP;
+                """,
+                    (
+                        unique_id,
+                        rel_path,
+                        current_sym_hash,
+                        current_logic_hash,
+                    ),
+                )
+
+    def update_symbol_hash(
+        self,
+        unique_id: str,
+        rel_path: str,
+        current_sym_hash: str,
+        current_logic_hash: Optional[str] = None,
+    ) -> Tuple[bool, bool]:
+        """Update symbol hashes and return (is_full_changed,
+        is_logic_changed)."""
+        is_full_changed, is_logic_changed = self.check_symbol_hash_changed(
+            unique_id, current_sym_hash, current_logic_hash
+        )
+        if is_full_changed or is_logic_changed:
+            self.save_symbol_hash(
+                unique_id, rel_path, current_sym_hash, current_logic_hash
+            )
+        return is_full_changed, is_logic_changed
 
     def save_symbol_cache(self, unique_id: str, data: Dict[str, Any]) -> None:
         """Save symbol LLM analysis result to SQLite with immediate commit."""

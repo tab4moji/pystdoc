@@ -18,6 +18,8 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.log
+*.txt
 .docgen/
 .venv
 .coverage

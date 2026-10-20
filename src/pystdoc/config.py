@@ -13,6 +13,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "token": None,
     "language": "English",
     "context_size": 16384,
+    "max_tokens": 16384,
     "concurrency": 1,
     "allow_fallback": False,
 }

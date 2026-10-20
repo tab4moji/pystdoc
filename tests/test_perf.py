@@ -129,3 +129,50 @@ def test_perf_profile_manager(tmp_path: Path):
     # Singleton instance test
     singleton = PerfProfileManager.get_instance(metrics_file=metrics_file)
     assert singleton is not None
+
+
+def test_record_server_timing_and_adaptive_timeout(tmp_path: Path):
+    metrics_file = tmp_path / "perf_metrics.json"
+    mgr = PerfProfileManager(metrics_file=metrics_file)
+
+    host = "http://192.168.11.6:11434"
+    model = "gemma4-26b-a4b"
+
+    # Default when no profile exists
+    t_def = mgr.get_adaptive_timeout(host, model, input_chars=1000)
+    assert t_def == 120
+
+    # Record first cold start request
+    mgr.record_server_timing(
+        host=host,
+        model=model,
+        input_chars=500,
+        output_chars=200,
+        elapsed_seconds=54.2,
+        is_first_in_session=True,
+    )
+
+    prof = mgr.get_server_profile(host, model)
+    assert prof.get("cold_start_duration") == 54.2
+    assert prof.get("max_cold_start_seen") == 54.2
+
+    # Adaptive timeout for first request should now account for cold start
+    t_first = mgr.get_adaptive_timeout(
+        host, model, input_chars=500, is_first_in_session=True
+    )
+    assert t_first >= 114  # 54.2 + 60
+
+    # Record normal warm request
+    mgr.record_server_timing(
+        host=host,
+        model=model,
+        input_chars=1000,
+        output_chars=300,
+        elapsed_seconds=8.5,
+        is_first_in_session=False,
+        idle_seconds_before=5.0,
+    )
+
+    prof2 = mgr.get_server_profile(host, model)
+    assert len(prof2.get("request_timings", [])) == 2
+    assert "avg_total_chars_per_sec" in prof2

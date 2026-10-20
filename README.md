@@ -49,25 +49,28 @@ your_project/
    - Evaluates call graphs in $O(V+E)$ linear time.
    - Automatically breaks cyclic mutual recursions and organizes code symbols into dependency-safe execution levels.
    - Level-by-level parallel LLM execution guarantees context-rich bottom-up summaries without race conditions.
-2. **High-Speed Incremental Sync & Semantic Change Propagation (v0.8.0)**:
-   - **Selective Bottom-Up Propagation**: Detects AST and logic-level code differences. If regenerated specifications remain semantically unchanged (evaluated by deterministic Jaccard / token-overlap metrics), change propagation terminates immediately without triggering cascading LLM re-analysis across upper modules.
+2. **High-Speed Incremental Sync & Semantic Change Propagation (v0.8.0 - v0.8.2)**:
+   - **Selective Bottom-Up Propagation & Immediate Snippet Flush**: Detects AST and logic-level code differences. If regenerated specifications remain semantically unchanged, cascading LLM re-analysis terminates early while Markdown documents (source code snippets, line ranges, caller/callee references) are immediately updated with latest code. Signature, kind, and callee alterations are guaranteed to propagate upstream.
    - **Content-Defined Map-Reduce Caching**: Intermediate summaries in architecture synthesis (`designgen`) are chunked using stable hash boundaries and cached per group in SQLite, ensuring that only groups containing edited functions are re-summarized.
    - **Architectural Entry-Point Filtering**: For system execution modeling (`execution_model.md`), key architectural functions (entry points, CLI routers, and core dispatchers) are automatically filtered and passed directly into the LLM context, bypassing heavy multi-step Map-Reduce loops and speeding up generation by up to 90%+.
-3. **3-in-1 Unified Documentation Pipeline**:
+3. **Flexible Step Execution & High-Precision UI Inference (v0.8.1)**:
+   - **Phase Re-execution & Recovery (`--from-step`, `--step`)**: Resume or selectively re-run pipeline stages (e.g., `--from-step 3` to restart from architecture design, or `--step 4` for README synthesis only) without regenerating bottom-up symbol documents.
+   - **High-Precision UI & CLI Prioritization**: Restricts GUI classification to high-confidence UI frameworks (`PyQt`, `Tkinter`, `GTK`, `Jetpack Compose`, etc.) while eliminating False Positive hallucinations (e.g. JavaFX). Heavily prioritizes CLI classification for command pipelines and automatically overwrites existing symbol annotations on re-runs.
+4. **3-in-1 Unified Documentation Pipeline**:
    - `docgen`: Bottom-up & top-down symbol-level documentation with SHA-256 and SQLite caching (`.pystdoc/documents/`).
    - `designgen`: Map-Reduce architectural synthesis (`.pystdoc/design/`).
    - `reportgen` / `pystdoc`: Executive summary README (`.pystdoc/README.md`) answering *"What does this project actually do?"*
-4. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
+5. **Multi-Language Codebase Deep Understanding (C/C++, Python, Java, Kotlin, Shell)**:
    - **C/C++**: `compile_commands.json` integration, include path resolution, and macro expansion via `libclang`.
    - **Java / Kotlin**: AST parsing via `javalang` & `kopyt` with class hierarchy, companion objects, and data classes.
    - **Python & Shell**: AST visitor and generic regex parser with import/call extraction.
    - **Fully Qualified Domain Names (FQDN)**: Disambiguates identical symbol names across large monorepos.
-5. **Feature Location & UI Component Pinpointing (`locate` / `pystdoc_locate_feature`)**:
+6. **Feature Location & UI Component Pinpointing (`locate` / `pystdoc_locate_feature`)**:
    - Pinpoint exact files, functions, UI elements, and line ranges (`Lines X-Y`) from high-level natural language queries (e.g., *"where is the debug notification button"*, *"add auth header"*) without running brute-force `Glob`/`Grep` across the entire project.
    - Built-in multi-lingual token scoring with automatic boosting for UI elements (`@Composable`, `Button`, `Dialog`, `Activity`, `Modifier`, etc.).
-6. **Impact & Inbound/Outbound Dependency Analysis (`impact` / `pystdoc_trace_impact`)**:
+7. **Impact & Inbound/Outbound Dependency Analysis (`impact` / `pystdoc_trace_impact`)**:
    - Instant 360-degree dependency tracing: inspect where a symbol is called from (*Inbound Callers / References*) and what it uses (*Outbound Dependencies*) before making breaking code changes or deletions.
-7. **Standard LLM Options & Multi-Language Support**:
+8. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
    - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (defaults to terminal language, e.g. `Japanese`, `English`, `日本語`).
 
@@ -86,6 +89,12 @@ pip install pystdoc
 ```bash
 # Full sync: complete 4-step pipeline (symbol docs, design docs, README overview)
 pystdoc --dir ./my_project/
+
+# Partial / Step-level re-run: resume pipeline from Step 3 (designgen) to Step 4 (reportgen)
+pystdoc --dir ./my_project/ --from-step 3
+
+# Single-step re-run: regenerate project overview README (.pystdoc/README.md) only
+pystdoc --dir ./my_project/ --step 4
 
 # Fast sync: bottom-up symbol analysis & indexing only (skips top-down design/report synthesis)
 pystdoc sync --fast --dir ./my_project/
@@ -157,7 +166,11 @@ pystdoc --watch --interval 0.5
 
 #### 4. Practical Real-World Example (Dedicated Remote LLM Server)
 ```bash
+# Production execution with dedicated local/remote server
 pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26b-a4b --language 日本語
+
+# Debugging LLM responses in realtime (tail -f tmp.debug.log in another terminal)
+pystdoc sync --dir ./target_project/ --debug
 ```
 
 ---
@@ -247,7 +260,11 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | Option | Alias / Env | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--dir` | | `./` | Target project directory path |
+| `--from-step` | | `None` | Start pipeline from specific step (`1`..`4`, `docgen`, `data`, `design`, `report`) |
+| `--step` | | `None` | Run only the specified step (`1`..`4`, `docgen`, `data`, `design`, `report`) |
 | `--fast` | | `false` | Fast bottom-up sync only (runs docgen symbol indexing, skips designgen and reportgen) |
+| `--skip-docgen` | | `false` | Skip Step 1 & 2 (source parsing and symbol document generation) |
+| `--skip-designgen` | | `false` | Skip Step 3 (architectural design and module synthesis) |
 | `--language` | `-l` | Terminal locale | Output documentation language (defaults to terminal language; e.g. `Japanese`, `English`, `日本語`) |
 | `--host` | `-H`, `--base-url` | `http://127.0.0.1:11434` | LLM server host endpoint URL |
 | `--model` | `-m`, `LLM_MODEL` | `gemma4-26b-a4b` | LLM model identifier |
@@ -255,6 +272,7 @@ pystdoc sync --dir ./target_project/ --host 192.168.0.11:11434 --model gemma4-26
 | `--context-size` | `--ctx-size` | `16384` | Context window size |
 | `--concurrency` | `-j` | `1` | Number of parallel LLM workers |
 | `--force` | `-f` | `false` | Force regenerate all documents ignoring cache |
+| `--debug` | `PYSTDOC_DEBUG` | `false` | Enable realtime LLM request and streaming token logging to `tmp.debug.log` |
 | `--compile-commands` | | `None` | Path to `compile_commands.json` |
 
 ---

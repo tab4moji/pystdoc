@@ -15,6 +15,7 @@ def detect_ui_type(
     joined_text = "\n".join(
         [d.get("raw_text", "") for d in docs] + (raw_texts or [])
     )
+    file_names = [d.get("file_name", "") for d in docs]
 
     gui_score = 0
     tui_score = 0
@@ -22,26 +23,52 @@ def detect_ui_type(
     gui_evidences = []
     tui_evidences = []
     cli_evidences = []
+    has_high_confidence_gui = False
 
-    # 1. Check GUI indicators
+    # 1. Check High-Confidence GUI indicators
+    # (strictly avoid generic words like Stage/Scene)
+    # Strictly NO JavaFX detection as per requirement.
     gui_patterns = [
-        (r"@Composable|setContent|remember|MutableState|Modifier",
-         "Jetpack Compose"),
-        (r"Activity|Fragment|findViewById|setContentView|ViewModel",
-         "Android UI"),
-        (r"JFrame|JPanel|JButton|ActionListener|JOptionPane|Swing",
-         "Java Swing/AWT"),
-        (r"javafx\.|Stage|Scene|FXML|Application", "JavaFX"),
-        (r"QMainWindow|QWidget|QApplication|QPushButton|PyQt|PySide",
-         "Qt Framework"),
-        (r"tkinter|Tk\(|ttk\.", "Tkinter"),
-        (r"GtkWindow|GtkWidget|gtk_", "GTK"),
+        (r"@Composable\b|setContent\s*\{", "Jetpack Compose", True),
+        (
+            r"class\s+\w+\s*:\s*(?:Activity|AppCompatActivity|"
+            r"ComponentActivity)\b|findViewById\(",
+            "Android UI",
+            True,
+        ),
+        (
+            r"import\s+javax\.swing\b|new\s+JFrame\(|new\s+JButton\(",
+            "Java Swing",
+            True,
+        ),
+        (
+            r"(?:from|import)\s+(?:PyQt[56]|PySide[26])|"
+            r"QMainWindow\(|QApplication\(|QWidget\(",
+            "Qt Framework",
+            True,
+        ),
+        (
+            r"(?:from|import)\s+tkinter\b|tk\.Tk\(|tkinter\.Tk\(|"
+            r"ttk\.Button\(",
+            "Tkinter",
+            True,
+        ),
+        (
+            r"gi\.repository\s+import\s+Gtk|import\s+gtk\b|"
+            r"gtk_window_new|GtkWindow\s*\*",
+            "GTK",
+            True,
+        ),
+        (r"(?:from|import)\s+wx\b|wx\.App\(", "wxWidgets", True),
+        (r"(?:from|import)\s+(?:kivy|flet)\b", "Kivy/Flet", True),
     ]
-    for pattern, name in gui_patterns:
+    for pattern, name, is_high_conf in gui_patterns:
         m = re.findall(pattern, joined_text, re.IGNORECASE)
         if m:
             gui_score += len(m) * 2
             gui_evidences.append(f"{name} ({len(m)} matches)")
+            if is_high_conf:
+                has_high_confidence_gui = True
 
     # 2. Check TUI indicators
     tui_patterns = [
@@ -53,27 +80,52 @@ def detect_ui_type(
     for pattern, name in tui_patterns:
         m = re.findall(pattern, joined_text, re.IGNORECASE)
         if m:
-            tui_score += len(m) * 3
+            tui_score += len(m) * 2
             tui_evidences.append(f"{name} ({len(m)} matches)")
 
-    # 3. Check CLI indicators
+    # 3. Check CLI indicators (Prioritized)
     cli_patterns = [
-        (r"argparse|ArgumentParser|add_argument", "argparse"),
+        (r"argparse|ArgumentParser|add_argument|parse_args", "argparse"),
         (r"@click\.command|click\.option|@click\.group", "Click"),
         (r"typer\.Typer|typer\.Option|typer\.Argument", "Typer"),
         (r"getopt|docopt|picocli|CommandLine", "CLI Parser"),
-        (r"sys\.argv|os\.environ|argc|argv", "Command-line args"),
-        (r"\bmain\s*\(\s*int\s+argc|\bmain\s*\(\s*String\s*\[\s*\]",
-         "Standard main CLI entry"),
+        (r"sys\.argv|os\.environ|\bargc\b|\bargv\b", "Command-line args"),
+        (r"if\s+__name__\s*==\s*['\"]__main__['\"]", "Python main entry"),
+        (
+            r"\bmain\s*\(\s*int\s+argc|\bmain\s*\(\s*String\s*\[\s*\]",
+            "Standard main entry",
+        ),
     ]
     for pattern, name in cli_patterns:
         m = re.findall(pattern, joined_text, re.IGNORECASE)
         if m:
-            cli_score += len(m)
+            cli_score += len(m) * 3
             cli_evidences.append(f"{name} ({len(m)} matches)")
 
-    # Determine primary UI type
-    if gui_score > 0 and gui_score >= tui_score and gui_score >= cli_score:
+    # Check file names/paths for strong CLI evidence
+    for fn in file_names:
+        fn_lower = fn.lower()
+        if any(
+            tok in fn_lower
+            for tok in ("/cli/", "cli.py", "_cli.", "-cli.", "cli/")
+        ):
+            cli_score += 15
+            cli_evidences.append(f"CLI file path pattern: {fn}")
+        elif any(tok in fn_lower for tok in ("main.py", "__main__.py")):
+            cli_score += 5
+            cli_evidences.append(f"Main entry script: {fn}")
+
+    # Determine primary UI type with CLI PRIORITY:
+    # Prioritize CLI unless GUI has high confidence and clearly dominates.
+    if cli_score > 0 and (
+        cli_score >= gui_score or not has_high_confidence_gui
+    ):
+        ui_type = "CLI"
+        framework = (
+            cli_evidences[0].split(" (")[0] if cli_evidences else "CLI"
+        )
+        evidences = cli_evidences
+    elif gui_score > 0 and has_high_confidence_gui and gui_score > cli_score:
         ui_type = "GUI"
         framework = gui_evidences[0].split(" (")[0] if gui_evidences else "GUI"
         evidences = gui_evidences
@@ -85,6 +137,10 @@ def detect_ui_type(
         ui_type = "CLI"
         framework = cli_evidences[0].split(" (")[0] if cli_evidences else "CLI"
         evidences = cli_evidences
+    elif gui_score > 0 and has_high_confidence_gui:
+        ui_type = "GUI"
+        framework = gui_evidences[0].split(" (")[0] if gui_evidences else "GUI"
+        evidences = gui_evidences
     else:
         ui_type = "Library"
         framework = "API / Module Library"
@@ -221,6 +277,7 @@ def annotate_documents_with_ui_context(
     documents_dir: Path,
     ui_info: Dict[str, Any],
     language: str = "English",
+    force: bool = False,
 ) -> int:
     """Bottom-up pass: Annotate symbol documents with inferred UI context."""
     if not documents_dir.exists():
@@ -248,7 +305,15 @@ def annotate_documents_with_ui_context(
 
         text = md_path.read_text(encoding="utf-8", errors="replace")
         if section_header in text:
-            continue
+            if not force:
+                continue
+            # Remove existing UI annotation block cleanly before re-annotating
+            pat = (
+                r"\n*"
+                + re.escape(section_header)
+                + r"[\s\S]*?(?=\n## |\Z)"
+            )
+            text = re.sub(pat, "", text)
 
         sym_data = {
             "file_name": md_path.name,

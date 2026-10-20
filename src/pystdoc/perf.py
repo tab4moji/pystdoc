@@ -333,3 +333,111 @@ class PerfProfileManager:
             base = 450 + int(round(6 * x_lines + 18 * c_val))
 
         return max(150, base)
+
+    def record_server_timing(
+        self,
+        host: Optional[str],
+        model: Optional[str],
+        input_chars: int,
+        output_chars: int,
+        elapsed_seconds: float,
+        is_first_in_session: bool = False,
+        idle_seconds_before: Optional[float] = None,
+    ) -> None:
+        """Record server response characteristics passively from normal usage.
+
+        Captures:
+        - Cold-start/wakeup latency (when session starts or after long idle).
+        - Request length vs response duration stats.
+        """
+        key = self._get_key(host, model)
+        elapsed = max(0.01, float(elapsed_seconds))
+        in_len = max(1, int(input_chars))
+        out_len = max(0, int(output_chars))
+
+        with self.lock:
+            if key not in self.data:
+                self.data[key] = {"categories": {}}
+
+            sp = self.data[key].setdefault("server_profile", {})
+
+            # 1. Track wakeup / cold start delay
+            is_cold = is_first_in_session or (
+                idle_seconds_before is not None and idle_seconds_before > 60.0
+            )
+            if is_cold:
+                prev_cold = sp.get("cold_start_duration")
+                if prev_cold is None:
+                    sp["cold_start_duration"] = round(elapsed, 2)
+                else:
+                    sp["cold_start_duration"] = round(
+                        0.7 * prev_cold + 0.3 * elapsed, 2
+                    )
+                sp["max_cold_start_seen"] = max(
+                    sp.get("max_cold_start_seen", 0.0), round(elapsed, 2)
+                )
+
+            # 2. Track request length vs response time samples
+            timings = sp.setdefault("request_timings", [])
+            timings.append({
+                "in_chars": in_len,
+                "out_chars": out_len,
+                "t": round(elapsed, 2),
+                "is_cold": is_cold,
+                "ts": round(time.time(), 1),
+            })
+            if len(timings) > 50:
+                sp["request_timings"] = timings[-50:]
+
+            warm_timings = [t for t in timings if not t.get("is_cold")]
+            if warm_timings:
+                total_in = sum(t["in_chars"] for t in warm_timings)
+                total_out = sum(t["out_chars"] for t in warm_timings)
+                total_t = sum(t["t"] for t in warm_timings)
+                if total_t > 0:
+                    sp["avg_total_chars_per_sec"] = round(
+                        (total_in + total_out) / total_t, 2
+                    )
+
+            sp["last_seen_timestamp"] = round(time.time(), 1)
+
+        self.save()
+
+    def get_server_profile(
+        self, host: Optional[str], model: Optional[str]
+    ) -> Dict[str, Any]:
+        """Return cached server characteristics if available, else dict."""
+        key = self._get_key(host, model)
+        with self.lock:
+            return dict(self.data.get(key, {}).get("server_profile", {}))
+
+    def get_adaptive_timeout(
+        self,
+        host: Optional[str],
+        model: Optional[str],
+        input_chars: int,
+        is_first_in_session: bool = False,
+        default_timeout: int = 120,
+    ) -> int:
+        """Calculate adaptive timeout based on cached server characteristics.
+
+        Only utilizes records when they exist; otherwise returns
+        default_timeout.
+        """
+        profile = self.get_server_profile(host, model)
+        if not profile:
+            return default_timeout
+
+        timeout = float(default_timeout)
+        cold_start = profile.get("max_cold_start_seen") or profile.get(
+            "cold_start_duration"
+        )
+        if is_first_in_session and cold_start:
+            timeout = max(timeout, float(cold_start) + 60.0)
+
+        rate = profile.get("avg_total_chars_per_sec")
+        if rate and rate > 0:
+            est_needed = (input_chars + 500) / rate
+            timeout = max(timeout, est_needed * 2.5)
+
+        return int(round(timeout))

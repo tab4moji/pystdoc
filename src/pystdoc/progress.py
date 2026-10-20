@@ -83,6 +83,9 @@ def format_eta(seconds: Optional[float]) -> str:
         return f"{hours:02d}:{mins:02d}:{secs:02d}"
 
 
+SPINNER_FRAMES = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
+
+
 def format_progress_line(
     phase_label: str,
     current: int,
@@ -93,13 +96,14 @@ def format_progress_line(
     is_tty: Optional[bool] = None,
     width: int = 24,
     sub_step_ratio: float = 0.0,
+    cached: int = 0,
+    spinner: str = "",
 ) -> str:
     """Format a single progress line with step, bar, and ratio."""
     if is_tty is None:
         is_tty = is_terminal(sys.stdout)
 
-    eff_current = current + max(0.0, min(0.99, sub_step_ratio))
-    pct = (eff_current / total * 100.0) if total > 0 else 100.0
+    pct = (current / total * 100.0) if total > 0 else 100.0
     if current >= total and elapsed is not None:
         timing_str = f" [Done in {elapsed:5.1f}s]"
     elif current < total and est_remaining is not None:
@@ -109,10 +113,17 @@ def format_progress_line(
     else:
         timing_str = ""
 
-    ratio_str = f"{current}/{total} ({pct:5.1f}%)"
+    breakdown_str = ""
+    if cached > 0 and total >= cached:
+        to_gen = total - cached
+        new_done = max(0, current - cached)
+        breakdown_str = f" [Cached: {cached}, Gen: {new_done}/{to_gen}]"
+
+    ratio_str = f"{current}/{total} ({pct:5.1f}%){breakdown_str}"
 
     if is_tty:
-        bar_str = f" {render_pip_bar(eff_current, total, width=width)}"
+        spin_prefix = f"{spinner} " if spinner else ""
+        bar_str = f" {render_pip_bar(current, total, width=width)}"
         prefix = f"[{phase_label}]{bar_str} {ratio_str}{timing_str}"
         cols = shutil.get_terminal_size((80, 24)).columns
         max_line_w = max(20, cols - 2)
@@ -120,13 +131,18 @@ def format_progress_line(
         prefix_w = get_display_width(prefix)
         if extra:
             sep = ": "
+            full_extra = f"{spin_prefix}{extra}"
             sep_w = get_display_width(sep)
             avail_extra_w = max_line_w - prefix_w - sep_w
             if avail_extra_w > 4:
-                trimmed_extra = truncate_display_width(extra, avail_extra_w)
+                trimmed_extra = truncate_display_width(
+                    full_extra, avail_extra_w
+                )
                 line = f"{prefix}{sep}{trimmed_extra}"
             else:
                 line = truncate_display_width(prefix, max_line_w)
+        elif spinner:
+            line = truncate_display_width(f"{prefix} {spinner}", max_line_w)
         else:
             line = truncate_display_width(prefix, max_line_w)
         return line
@@ -143,13 +159,16 @@ class PhaseProgressTracker:
         self,
         phase_label: str,
         total: int,
+        initial: int = 0,
+        cached: int = 0,
         is_tty: Optional[bool] = None,
         width: int = 24,
         stream=None,
     ):
         self.phase_label = phase_label
         self.total = max(0, total)
-        self.current = 0
+        self.current = min(self.total, max(0, initial))
+        self.cached = max(0, cached)
         self.sub_step_ratio = 0.0
         self.stream = stream if stream is not None else sys.stdout
         self.is_tty = is_terminal(self.stream) if is_tty is None else is_tty
@@ -158,6 +177,16 @@ class PhaseProgressTracker:
         self._finished = False
         self.est_remaining: Optional[float] = None
         self.last_rendered_len = 0
+        self.spinner_idx = 0
+        self.spinner_char = ""
+        self._last_extra = ""
+        self.spinner_direction = 1
+
+    def toggle_spinner_direction(self) -> int:
+        """Invert spinner rotation direction (clockwise/counter-clockwise)."""
+        with self.lock:
+            self.spinner_direction = -self.spinner_direction
+            return self.spinner_direction
 
     def set_remaining_estimate(self, seconds: Optional[float]) -> None:
         """Update estimated remaining time in seconds."""
@@ -169,12 +198,14 @@ class PhaseProgressTracker:
         extra: str = "",
         elapsed: Optional[float] = None,
         est_remaining: Optional[float] = None,
+        spinner: Optional[str] = None,
     ) -> str:
         est = (
             est_remaining
             if est_remaining is not None
             else self.est_remaining
         )
+        spin = spinner if spinner is not None else self.spinner_char
         return format_progress_line(
             phase_label=self.phase_label,
             current=self.current,
@@ -185,6 +216,8 @@ class PhaseProgressTracker:
             is_tty=self.is_tty,
             width=self.width,
             sub_step_ratio=self.sub_step_ratio,
+            cached=self.cached,
+            spinner=spin,
         )
 
     def _write_in_place(self, line: str) -> None:
@@ -203,6 +236,40 @@ class PhaseProgressTracker:
             self.stream.write(f"{line}\n")
             self.stream.flush()
 
+    def spin(
+        self,
+        extra: Optional[str] = None,
+        est_remaining: Optional[float] = None,
+        reverse: Optional[bool] = None,
+        current_chars: Optional[int] = None,
+        predicted_chars: Optional[int] = None,
+    ) -> str:
+        """Advance spinner and render in-place progress line."""
+        with self.lock:
+            if reverse is True:
+                step = -1
+            elif reverse is False:
+                step = 1
+            else:
+                step = self.spinner_direction
+            self.spinner_idx = (self.spinner_idx + step) % len(SPINNER_FRAMES)
+            self.spinner_char = SPINNER_FRAMES[self.spinner_idx]
+
+            display_extra = extra if extra is not None else self._last_extra
+            if extra is not None:
+                self._last_extra = extra
+
+            if est_remaining is not None:
+                self.est_remaining = est_remaining
+            line = self._render(
+                extra=display_extra,
+                est_remaining=self.est_remaining,
+                spinner=self.spinner_char,
+            )
+            if self.is_tty:
+                self._write_in_place(line)
+        return line
+
     def update_stream(
         self,
         current_chars: int,
@@ -210,15 +277,15 @@ class PhaseProgressTracker:
         extra: str = "",
         est_remaining: Optional[float] = None,
     ) -> str:
-        """Update in-progress streaming ratio and refresh progress line."""
+        """Update in-progress streaming status and refresh progress line."""
         with self.lock:
-            ratio = max(
-                0.0, min(0.99, current_chars / max(1, predicted_chars))
-            )
-            self.sub_step_ratio = ratio
             if est_remaining is not None:
                 self.est_remaining = est_remaining
-            line = self._render(extra=extra, est_remaining=self.est_remaining)
+            if extra:
+                self._last_extra = extra
+            line = self._render(
+                extra=self._last_extra, est_remaining=self.est_remaining
+            )
             if self.is_tty:
                 self._write_in_place(line)
         return line
@@ -233,9 +300,12 @@ class PhaseProgressTracker:
         """Advance progress and update in-place progress line on TTY."""
         with self.lock:
             self.sub_step_ratio = 0.0
+            self.spinner_char = ""
             self.current = min(self.total, self.current + step)
             if est_remaining is not None:
                 self.est_remaining = est_remaining
+            if extra:
+                self._last_extra = extra
             line = self._render(
                 extra=extra, elapsed=elapsed, est_remaining=self.est_remaining
             )
@@ -252,6 +322,8 @@ class PhaseProgressTracker:
         with self.lock:
             if est_remaining is not None:
                 self.est_remaining = est_remaining
+            if extra:
+                self._last_extra = extra
             line = self._render(
                 extra=extra, elapsed=elapsed, est_remaining=self.est_remaining
             )

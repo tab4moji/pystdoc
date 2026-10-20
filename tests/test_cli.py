@@ -7,7 +7,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from pystdoc.cli import docgen_main, designgen_main, reportgen_main
+from pystdoc.cli import (
+    designgen_main,
+    docgen_main,
+    normalize_step_identifier,
+    pystdoc_main,
+    reportgen_main,
+)
 
 
 class TestCLI(unittest.TestCase):
@@ -512,6 +518,115 @@ class TestCLI(unittest.TestCase):
                     mock_docgen.assert_called_once()
                     _, kwargs = mock_docgen.call_args
                     self.assertEqual(kwargs.get("language"), "French")
+
+    def test_normalize_step_identifier(self):
+        self.assertEqual(normalize_step_identifier("1"), 1)
+        self.assertEqual(normalize_step_identifier("docgen"), 1)
+        self.assertEqual(normalize_step_identifier("symbol"), 1)
+        self.assertEqual(normalize_step_identifier("2"), 2)
+        self.assertEqual(normalize_step_identifier("data"), 2)
+        self.assertEqual(normalize_step_identifier("variables"), 2)
+        self.assertEqual(normalize_step_identifier("3"), 3)
+        self.assertEqual(normalize_step_identifier("designgen"), 3)
+        self.assertEqual(normalize_step_identifier("design"), 3)
+        self.assertEqual(normalize_step_identifier("4"), 4)
+        self.assertEqual(normalize_step_identifier("reportgen"), 4)
+        self.assertEqual(normalize_step_identifier("readme"), 4)
+        self.assertIsNone(normalize_step_identifier(None))
+        self.assertIsNone(normalize_step_identifier("invalid_step"))
+        self.assertIsNone(normalize_step_identifier("99"))
+
+    @patch("pystdoc.cli.run_docgen", return_value=0)
+    @patch("pystdoc.cli.run_design_generation", return_value=0)
+    @patch("pystdoc.cli.generate_readme_doc")
+    def test_cli_from_step_and_step_options(
+        self, mock_report, mock_design, mock_docgen
+    ):
+        # 1. --from-step 3: skips docgen (Step 1,2), executes design & report
+        test_args_from3 = [
+            "pystdoc",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+            "--from-step", "3",
+        ]
+        with patch("sys.argv", test_args_from3):
+            with self.assertRaises(SystemExit) as cm:
+                pystdoc_main()
+            self.assertEqual(cm.exception.code, 0)
+            mock_docgen.assert_not_called()
+            mock_design.assert_called_once()
+            mock_report.assert_called_once()
+
+        mock_docgen.reset_mock()
+        mock_design.reset_mock()
+        mock_report.reset_mock()
+
+        # 2. --step 4 (reportgen): skips docgen & designgen, executes report
+        test_args_step4 = [
+            "pystdoc",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+            "--step", "reportgen",
+        ]
+        with patch("sys.argv", test_args_step4):
+            with self.assertRaises(SystemExit) as cm:
+                pystdoc_main()
+            self.assertEqual(cm.exception.code, 0)
+            mock_docgen.assert_not_called()
+            mock_design.assert_not_called()
+            mock_report.assert_called_once()
+
+        mock_docgen.reset_mock()
+        mock_design.reset_mock()
+        mock_report.reset_mock()
+
+        # 3. --step 3 (designgen): skips docgen, runs designgen, skips report
+        test_args_step3 = [
+            "pystdoc",
+            "--dir", str(self.test_dir),
+            "--no-llm",
+            "--allow-fallback",
+            "--step", "3",
+        ]
+        with patch("sys.argv", test_args_step3):
+            with self.assertRaises(SystemExit) as cm:
+                pystdoc_main()
+            self.assertEqual(cm.exception.code, 0)
+            mock_docgen.assert_not_called()
+            mock_design.assert_called_once()
+            mock_report.assert_not_called()
+
+        # 4. Invalid --from-step exits with code 1
+        with patch("sys.argv", ["pystdoc", "--from-step", "invalid"]):
+            with self.assertRaises(SystemExit) as cm:
+                pystdoc_main()
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch("pystdoc.cli.run_docgen", return_value=0)
+    @patch("pystdoc.cli.run_design_generation", return_value=0)
+    @patch("pystdoc.cli.generate_readme_doc")
+    def test_cli_debug_flag(self, _mock_rep, _mock_des, _mock_doc):
+        from pystdoc.llm_client import is_debug_mode, set_debug_mode
+        try:
+            set_debug_mode(False)
+            self.assertFalse(is_debug_mode())
+
+            test_args = [
+                "pystdoc",
+                "--dir", str(self.test_dir),
+                "--no-llm",
+                "--allow-fallback",
+                "--debug",
+            ]
+            with patch("sys.argv", test_args):
+                with self.assertRaises(SystemExit) as cm:
+                    pystdoc_main()
+                self.assertEqual(cm.exception.code, 0)
+                self.assertTrue(is_debug_mode())
+        finally:
+            set_debug_mode(False)
 
 
 if __name__ == "__main__":

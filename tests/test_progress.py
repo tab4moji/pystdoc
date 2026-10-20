@@ -182,6 +182,26 @@ def test_format_progress_line():
     assert "[Step 3/4 designgen]" in line_def
     assert "0/0 (100.0%)" in line_def
 
+    # 9. Cached breakdown
+    line_cached = format_progress_line(
+        phase_label="Step 1/4 docgen",
+        current=24,
+        total=63,
+        cached=24,
+        is_tty=False,
+    )
+    assert "[Cached: 24, Gen: 0/39]" in line_cached
+    assert "24/63 ( 38.1%)" in line_cached
+
+    line_cached_progress = format_progress_line(
+        phase_label="Step 1/4 docgen",
+        current=25,
+        total=63,
+        cached=24,
+        is_tty=False,
+    )
+    assert "[Cached: 24, Gen: 1/39]" in line_cached_progress
+
 
 def test_phase_progress_tracker():
     stream = io.StringIO()
@@ -234,6 +254,23 @@ def test_phase_progress_tracker():
     assert tracker2.current == 100
     tracker2.finish()
 
+    # Tracker with initial and cached count
+    s_cached = io.StringIO()
+    t_c = PhaseProgressTracker(
+        "Step 1/4 docgen",
+        total=63,
+        initial=24,
+        cached=24,
+        is_tty=False,
+        stream=s_cached,
+    )
+    assert t_c.current == 24
+    assert t_c.cached == 24
+    l_adv = t_c.advance(1, extra="new_sym")
+    assert "25/63 ( 39.7%)" in l_adv
+    assert "[Cached: 24, Gen: 1/39]" in l_adv
+    t_c.finish()
+
 
 def test_design_engine_cached_without_tracker(tmp_path: Path):
     docgen_dir = tmp_path / ".pystdoc"
@@ -274,7 +311,6 @@ def test_design_engine_cached_without_tracker(tmp_path: Path):
         modules, None, tmp_path, db, tracker=None
     )
     assert m1 == m2
-
     # 4. overview without tracker
     ov1 = generate_overview_doc(
         dm1, em1, m1, None, tmp_path, db, tracker=None
@@ -284,3 +320,70 @@ def test_design_engine_cached_without_tracker(tmp_path: Path):
     )
     assert ov1 == ov2
     db.close()
+
+
+def test_design_engine_streaming_with_tracker(tmp_path: Path):
+    from unittest.mock import MagicMock
+    stream = io.StringIO()
+    tracker = PhaseProgressTracker(
+        "Step 3/4 designgen", total=4, is_tty=True, width=10, stream=stream
+    )
+    db = DocgenDB(tmp_path / "test_stream.db")
+
+    mock_llm = MagicMock()
+
+    def fake_chat(messages, on_chunk=None):
+        if on_chunk:
+            on_chunk("chunk", 5)
+        return "Generated design content"
+
+    mock_llm.chat_completion.side_effect = fake_chat
+
+    type_docs = [{"file_name": "t.md", "signature": "int", "purpose": "type"}]
+    var_docs = [{"file_name": "v.md", "signature": "int", "purpose": "var"}]
+
+    res = generate_data_models_doc(
+        type_docs,
+        var_docs,
+        mock_llm,
+        tmp_path,
+        db=db,
+        force=True,
+        tracker=tracker,
+    )
+    assert res == "Generated design content"
+    assert tracker.current == 1
+    assert "data_models.md" in stream.getvalue()
+
+    db.close()
+
+
+def test_phase_progress_tracker_spin():
+    stream = io.StringIO()
+    tracker = PhaseProgressTracker(
+        "test", total=10, initial=2, is_tty=True, width=10, stream=stream
+    )
+    # 1. Calling spin advances spinner frame in clockwise direction
+    line1 = tracker.spin(extra="chunk 1")
+    assert "⣾" in line1 or "⣽" in line1
+    assert "chunk 1" in line1
+
+    line2 = tracker.spin(extra="chunk 2")
+    assert "chunk 2" in line2
+    assert tracker.spinner_char != ""
+
+    # 2. Toggle direction to reverse (counter-clockwise)
+    tracker.toggle_spinner_direction()
+    assert tracker.spinner_direction == -1
+    line3 = tracker.spin(extra="chunk 3")
+    assert "chunk 3" in line3
+
+    # 3. spin with character count in extra string
+    line4 = tracker.spin(extra="Gen (250 chars)")
+    assert "Gen (250 chars)" in line4
+    assert tracker.spinner_char != ""
+
+    # 4. advance advances integer progress and resets spinner_char
+    l_adv = tracker.advance(1, extra="done symbol")
+    assert "3/10 ( 30.0%)" in l_adv
+    assert tracker.spinner_char == ""

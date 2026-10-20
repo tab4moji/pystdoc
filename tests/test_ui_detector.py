@@ -21,18 +21,16 @@ class TestUIDetector(unittest.TestCase):
         gui_samples = [
             ("Jetpack Compose", [
                 {"raw_text": "@Composable fun MyScreen() { "
-                             "remember { mutableStateOf(1) } }"}
+                             "setContent { text('hello') } }"}
             ], "GUI"),
             ("Android UI", [
                 {"raw_text": "class MyActivity : Activity() { "
                              "fun onCreate() { findViewById(0) } }"}
             ], "GUI"),
             ("Java Swing", [
-                {"raw_text": "JFrame frame = new JFrame(); "
+                {"raw_text": "import javax.swing.*; "
+                             "JFrame frame = new JFrame(); "
                              "JButton btn = new JButton();"}
-            ], "GUI"),
-            ("JavaFX", [
-                {"raw_text": "javafx.application.Application Stage Scene"}
             ], "GUI"),
             ("Qt", [
                 {"raw_text": "class MainWindow(QMainWindow): "
@@ -51,6 +49,26 @@ class TestUIDetector(unittest.TestCase):
             res = detect_ui_type(docs)
             self.assertEqual(res["ui_type"], expected, f"Failed for {name}")
             self.assertTrue(res["has_ui"])
+
+        # Test JavaFX non-detection & Scene/Stage safety
+        # (must NOT be detected as GUI)
+        res_javafx = detect_ui_type([
+            {"raw_text": "class AnimationPipeline: "
+                         "def render_scene_stage(self, scene, stage): pass"}
+        ])
+        self.assertNotEqual(res_javafx["ui_type"], "GUI")
+        self.assertNotIn("JavaFX", res_javafx.get("framework", ""))
+
+        # Test CLI priority over ambiguous GUI words or when CLI pattern exists
+        res_cli_prio = detect_ui_type(
+            docs=[
+                {"file_name": "anima_cli/main.py",
+                 "raw_text": "import argparse\n"
+                             "parser = argparse.ArgumentParser()\n"
+                             "# renders scene and stage"}
+            ]
+        )
+        self.assertEqual(res_cli_prio["ui_type"], "CLI")
 
         # Test TUI patterns
         tui_samples = [
@@ -374,6 +392,43 @@ class TestUIDetector(unittest.TestCase):
                 allow_fallback=True,
             )
             self.assertTrue((docgen_dir / "README.md").exists())
+
+    def test_annotate_documents_force_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp_d:
+            docs_d = Path(tmp_d) / "documents"
+            docs_d.mkdir(parents=True, exist_ok=True)
+            doc_file = docs_d / "anim.py.md"
+            doc_file.write_text(
+                "# anim.py\n- **Symbol Kind**: `function`\n"
+                "## UI・ユーザー操作における役割\n"
+                "- **UI Type**: `GUI` (OldFramework)\n"
+                "- **Interaction Specification**: Old GUI desc\n"
+                "## Source Code Snippet\n```python\npass\n```\n",
+                encoding="utf-8",
+            )
+
+            ui_info_cli = {
+                "ui_type": "CLI",
+                "framework": "argparse",
+                "has_ui": True,
+            }
+
+            # 1. Without force: stays unchanged
+            annotated_cnt = annotate_documents_with_ui_context(
+                docs_d, ui_info_cli, language="ja", force=False
+            )
+            self.assertEqual(annotated_cnt, 0)
+            self.assertIn("OldFramework", doc_file.read_text(encoding="utf-8"))
+
+            # 2. With force=True: overwrites cleanly with new CLI UI role
+            annotated_cnt_force = annotate_documents_with_ui_context(
+                docs_d, ui_info_cli, language="ja", force=True
+            )
+            self.assertEqual(annotated_cnt_force, 1)
+            new_text = doc_file.read_text(encoding="utf-8")
+            self.assertNotIn("OldFramework", new_text)
+            self.assertIn("- **UI Type**: `CLI` (argparse)", new_text)
+            self.assertIn("## Source Code Snippet", new_text)
 
 
 if __name__ == "__main__":

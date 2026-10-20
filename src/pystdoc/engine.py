@@ -126,10 +126,27 @@ def is_trivial_internal_change(
 def check_external_interface_changed(
     old_cache: Optional[Dict[str, Any]],
     new_sym: Any,
+    old_meta: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Check if the external specification (contract/purpose/I/O) changed."""
     if old_cache is None:
         return True
+
+    # 1. Check structural / signature change from metadata
+    if old_meta:
+        if old_meta.get("kind") != new_sym.kind:
+            return True
+        old_sig = (old_meta.get("signature") or "").strip()
+        new_sig = (new_sym.signature or "").strip()
+        if old_sig and new_sig and old_sig != new_sig:
+            return True
+        try:
+            old_callees = set(json.loads(old_meta.get("callees_json") or "[]"))
+        except Exception:
+            old_callees = set()
+        new_callees = set(new_sym.callees or [])
+        if old_callees != new_callees:
+            return True
 
     def normalize_spec_text(text: Optional[str]) -> str:
         if not text:
@@ -404,6 +421,7 @@ def run_docgen(
     token: Optional[str] = None,
     api_key: Optional[str] = None,
     context_size: int = 16384,
+    max_tokens: int = 16384,
     language: str = "English",
     force: bool = False,
     allow_fallback: bool = False,
@@ -455,6 +473,7 @@ def run_docgen(
                 model=model,
                 token=token or api_key,
                 context_size=context_size,
+                max_tokens=max_tokens,
             )
             if client.check_availability():
                 llm_client = client
@@ -502,11 +521,6 @@ def run_docgen(
             all_symbol_nodes.extend(nodes)
 
         total_symbols_count = len(all_symbol_nodes)
-        print(
-            f"[2/5] Enumerated symbols (with FQDN): "
-            f"{total_symbols_count} symbols total",
-            flush=True,
-        )
 
         if not matched_files:
             db.close()
@@ -522,6 +536,7 @@ def run_docgen(
 
         # Collect initially changed or missing symbols
         dirty_symbol_ids: Set[str] = set()
+        code_changed_symbol_ids: Set[str] = set()
         trivial_changed_symbol_ids: Set[str] = set()
         interface_changed_symbol_ids: Set[str] = set()
         node_snippets: Dict[str, str] = {}
@@ -563,27 +578,39 @@ def run_docgen(
                 or db.load_symbol_cache(node.unique_id)
             )
             has_cache = old_cache is not None
-            doc_file_missing = (
-                not has_cache
-                or not expected_file_doc.exists()
-                or not sym_file_exists
-            )
 
-            is_full_changed, is_logic_changed = db.update_symbol_hash(
+            # Check if hash changed without updating DB prematurely
+            is_full_changed, is_logic_changed = db.check_symbol_hash_changed(
                 node.unique_id,
-                node.rel_path.as_posix(),
                 sym_full_hash,
                 sym_logic_hash,
             )
-            db.save_symbol_metadata(
-                node.unique_id, sym, node.rel_path.as_posix()
-            )
+
+            # Check location/line range or signature change
+            location_changed = False
+            sig_changed = False
+            if old_meta:
+                old_start = old_meta.get("line_start")
+                old_end = old_meta.get("line_end")
+                if (
+                    old_start is not None
+                    and old_end is not None
+                    and (
+                        old_start != sym.line_start
+                        or old_end != sym.line_end
+                    )
+                ):
+                    location_changed = True
+                old_sig = (old_meta.get("signature") or "").strip()
+                new_sig = (sym.signature or "").strip()
+                if old_sig and new_sig and old_sig != new_sig:
+                    sig_changed = True
 
             is_trivial = False
             if (
                 (is_logic_changed or is_full_changed)
                 and not force
-                and not doc_file_missing
+                and has_cache
             ):
                 is_trivial = is_trivial_internal_change(
                     old_cache, old_meta, sym
@@ -591,12 +618,36 @@ def run_docgen(
 
             if (
                 force
-                or doc_file_missing
+                or not has_cache
                 or (is_logic_changed and not is_trivial)
+                or sig_changed
             ):
                 dirty_symbol_ids.add(node.unique_id)
             elif is_logic_changed and is_trivial:
                 trivial_changed_symbol_ids.add(node.unique_id)
+
+            if (
+                force
+                or not sym_file_exists
+                or not expected_file_doc.exists()
+                or is_logic_changed
+                or sig_changed
+            ):
+                code_changed_symbol_ids.add(node.unique_id)
+
+        cached_symbols_count = total_symbols_count - len(dirty_symbol_ids)
+        to_generate_count = len(dirty_symbol_ids)
+        cache_detail = (
+            f" (Cached: {cached_symbols_count}, "
+            f"To generate: {to_generate_count})"
+            if cached_symbols_count > 0
+            else ""
+        )
+        print(
+            f"[2/5] Enumerated symbols (with FQDN): "
+            f"{total_symbols_count} symbols total{cache_detail}",
+            flush=True,
+        )
 
         perf_mgr = PerfProfileManager.get_instance()
         host_str = llm_client.base_url if llm_client else None
@@ -643,9 +694,13 @@ def run_docgen(
         tracker = PhaseProgressTracker(
             phase_label="Step 1/4 docgen",
             total=total_symbols_count,
+            initial=cached_symbols_count,
+            cached=cached_symbols_count,
             is_tty=is_tty,
         )
         tracker.set_remaining_estimate(get_current_eta())
+        if is_tty:
+            tracker.render_current(est_remaining=get_current_eta())
 
         def process_single_node(node: SymbolNode) -> None:
             InterruptionState.check_interrupted()
@@ -700,19 +755,8 @@ def run_docgen(
                 sym.top_down_context = cached_data.get(
                     "top_down_context", sym.top_down_context
                 )
-                with rem_lock:
-                    remaining_est_total = max(
-                        0.0,
-                        remaining_est_total
-                        - node_est_durations.get(node.unique_id, 0.0),
-                    )
-                    curr_eta = remaining_est_total / max(1, concurrency)
-                tracker.advance(
-                    1,
-                    extra=f"[Cached] {node.unique_id}",
-                    est_remaining=curr_eta,
-                )
             elif is_static_bypass:
+                old_meta = db.load_symbol_metadata(node.unique_id)
                 old_cache = (
                     db.load_symbol_cache(cache_key)
                     or db.load_symbol_cache(node.unique_id)
@@ -736,7 +780,7 @@ def run_docgen(
                 with dirty_lock:
                     actually_updated_symbol_ids.add(node.unique_id)
                     has_external_change = check_external_interface_changed(
-                        old_cache, sym
+                        old_cache, sym, old_meta
                     )
                     if has_external_change:
                         interface_changed_symbol_ids.add(node.unique_id)
@@ -756,6 +800,7 @@ def run_docgen(
                     est_remaining=curr_eta,
                 )
             elif llm_client:
+                old_meta = db.load_symbol_metadata(node.unique_id)
                 old_cache = (
                     db.load_symbol_cache(cache_key)
                     or db.load_symbol_cache(node.unique_id)
@@ -768,6 +813,7 @@ def run_docgen(
                     if node.direct_callee_ids
                     else ""
                 )
+                tracker.toggle_spinner_direction()
                 tracker.render_current(
                     extra=f"Requesting: {node.unique_id}{dep_info}",
                     est_remaining=get_current_eta(),
@@ -778,9 +824,22 @@ def run_docgen(
                     for p in sym.parameters
                 ]
                 lang = get_code_language(full_path.suffix)
-
                 line_cnt = max(1, sym.line_end - sym.line_start + 1)
                 start_sym_time = time.time()
+
+                def _on_symbol_chunk(
+                    piece: str, total_chars: int, attempt: int = 1
+                ) -> None:
+                    retry_label = (
+                        f" (Attempt {attempt}/3)" if attempt > 1 else ""
+                    )
+                    tracker.spin(
+                        extra=f"Generating{retry_label}: "
+                              f"{node.unique_id}{dep_info} "
+                              f"({total_chars} chars)",
+                        est_remaining=get_current_eta(),
+                    )
+
                 explanation = llm_client.explain_symbol(
                     name=sym.name,
                     kind=sym.kind,
@@ -793,6 +852,7 @@ def run_docgen(
                     callee_context=callee_context,
                     language=norm_lang,
                     allow_fallback=allow_fallback,
+                    on_chunk=_on_symbol_chunk,
                 )
                 sym_elapsed = time.time() - start_sym_time
 
@@ -836,7 +896,7 @@ def run_docgen(
                 with dirty_lock:
                     actually_updated_symbol_ids.add(node.unique_id)
                     has_external_change = check_external_interface_changed(
-                        old_cache, sym
+                        old_cache, sym, old_meta
                     )
                     if has_external_change:
                         interface_changed_symbol_ids.add(node.unique_id)
@@ -891,12 +951,14 @@ def run_docgen(
                 (target_dir / ".pystdoc" / "documents" / fn).exists()
                 for fn in candidate_files
             )
-            if (
+            need_write_doc = (
                 is_dirty
                 or force
                 or not doc_exists
+                or node.unique_id in code_changed_symbol_ids
                 or node.unique_id in trivial_changed_symbol_ids
-            ):
+            )
+            if need_write_doc:
                 write_single_symbol_doc(
                     target_dir,
                     rel_path,
@@ -905,6 +967,17 @@ def run_docgen(
                     language=norm_lang,
                     symbol_id_override=raw_id if raw_id else None,
                 )
+
+            # Persist latest hash and metadata to SQLite
+            db.save_symbol_hash(
+                node.unique_id,
+                node.rel_path.as_posix(),
+                node_hashes[node.unique_id],
+                sym.logic_hash,
+            )
+            db.save_symbol_metadata(
+                node.unique_id, sym, node.rel_path.as_posix()
+            )
 
         # Process Level by Level
         for lvl_nodes in level_groups:
@@ -1124,6 +1197,7 @@ def run_docgen(
                 ctx_desc = " | ".join(ctx_names)
 
                 with print_lock:
+                    var_tracker.toggle_spinner_direction()
                     var_tracker.render_current(
                         extra=f"[Top-down Context Updating...]: "
                         f"{v_node.unique_id} ({ctx_desc})",
@@ -1135,8 +1209,21 @@ def run_docgen(
                 )
                 lang = get_code_language(v_full.suffix)
                 line_cnt = max(1, v_sym.line_end - v_sym.line_start + 1)
-
                 start_var_time = time.time()
+
+                def _on_var_chunk(
+                    piece: str, total_chars: int, attempt: int = 1
+                ) -> None:
+                    retry_label = (
+                        f" (Attempt {attempt}/3)" if attempt > 1 else ""
+                    )
+                    with print_lock:
+                        var_tracker.spin(
+                            extra=f"[Top-down Context{retry_label}]: "
+                                  f"{v_node.unique_id} ({total_chars} chars)",
+                            est_remaining=get_var_eta(),
+                        )
+
                 top_down_res = llm_client.refine_variable_top_down(
                     var_name=v_sym.name,
                     var_kind=v_sym.kind,
@@ -1147,6 +1234,7 @@ def run_docgen(
                     language=norm_lang,
                     allow_fallback=allow_fallback,
                     parent_container_info=parent_container_info,
+                    on_chunk=_on_var_chunk,
                 )
                 var_elapsed = time.time() - start_var_time
 
@@ -1235,6 +1323,27 @@ def run_docgen(
                         est_remaining=curr_eta,
                     )
 
+                if (
+                    v_doc_missing
+                    or force
+                    or v_node.unique_id in code_changed_symbol_ids
+                ):
+                    prefix_in_unique_id = ""
+                    if "::" in v_node.unique_id:
+                        id_part = v_node.unique_id.split("::", 1)[1]
+                        raw_id = id_part.split(".", 1)[-1]
+                        if "." in raw_id:
+                            prefix_in_unique_id = (
+                                raw_id.rsplit(".", 1)[0] + "."
+                            )
+                    write_single_symbol_doc(
+                        target_dir,
+                        v_rel,
+                        v_sym,
+                        prefix_name=prefix_in_unique_id,
+                        language=norm_lang,
+                    )
+
         if var_nodes:
             InterruptionState.check_interrupted()
             executor = concurrent.futures.ThreadPoolExecutor(
@@ -1286,7 +1395,10 @@ def run_docgen(
                                 f"`{c_node.symbol.name}` (`{c_rel}`)"
                             )
                 if caller_info_list:
+                    old_refs = n.symbol.referencing_functions
                     n.symbol.referencing_functions = caller_info_list
+                    if old_refs != caller_info_list:
+                        code_changed_symbol_ids.add(n.unique_id)
 
         total_individual_docs = 0
         docgen_docs_dir = target_dir / ".pystdoc" / "documents"
@@ -1297,6 +1409,8 @@ def run_docgen(
             file_has_dirty = any(
                 n.unique_id in actually_updated_symbol_ids
                 or n.unique_id in dirty_symbol_ids
+                or n.unique_id in code_changed_symbol_ids
+                or n.unique_id in trivial_changed_symbol_ids
                 for n in all_symbol_nodes
                 if n.rel_path == rel_path
             )
@@ -1312,6 +1426,7 @@ def run_docgen(
                     target_dir, rel_path, symbols, language=norm_lang
                 )
                 total_individual_docs += len(ind_docs)
+                db.update_file_hash(rel_path.as_posix(), current_hash)
             else:
                 # Count symbols for reporting
                 def count_syms(sym_list):

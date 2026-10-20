@@ -153,6 +153,122 @@ class TestEngineAndCache(unittest.TestCase):
             self.assertEqual(ret, 0)
             self.assertTrue((self.test_dir / ".pystdoc" / "index.db").exists())
 
+    def test_check_external_interface_changed_with_meta(self):
+        from pystdoc.engine import check_external_interface_changed
+
+        old_cache = {
+            "purpose": "Calculates sum of two integers.",
+            "inputs_note": "int a, int b",
+            "outputs_note": "int sum",
+        }
+        sym = Symbol(
+            name="add",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            signature="int add(int a, int b)",
+            purpose="Calculates sum of two integers.",
+            inputs_note="int a, int b",
+            outputs_note="int sum",
+            callees=["log_info"],
+        )
+        old_meta = {
+            "kind": "function",
+            "signature": "int add(int a, int b)",
+            "callees_json": '["log_info"]',
+        }
+        # Identical meta and cache -> False (No change)
+        self.assertFalse(
+            check_external_interface_changed(old_cache, sym, old_meta)
+        )
+
+        # Signature changed -> True
+        sym_diff_sig = Symbol(
+            name="add",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            signature="long add(long a, long b)",
+            purpose="Calculates sum of two integers.",
+            inputs_note="int a, int b",
+            outputs_note="int sum",
+            callees=["log_info"],
+        )
+        self.assertTrue(
+            check_external_interface_changed(old_cache, sym_diff_sig, old_meta)
+        )
+
+        # Callees changed -> True
+        sym_diff_callees = Symbol(
+            name="add",
+            kind="function",
+            line_start=1,
+            line_end=5,
+            signature="int add(int a, int b)",
+            purpose="Calculates sum of two integers.",
+            inputs_note="int a, int b",
+            outputs_note="int sum",
+            callees=["log_info", "trace"],
+        )
+        self.assertTrue(
+            check_external_interface_changed(
+                old_cache, sym_diff_callees, old_meta
+            )
+        )
+
+    def test_bottom_up_early_stopping_updates_code_snippets(self):
+        c_file = self.src_dir / "math_ops.c"
+        c_file.write_text(
+            "int multiply(int a, int b) {\n"
+            "    return a * b;\n"
+            "}\n"
+            "int compute(int x) {\n"
+            "    return multiply(x, 2);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        ret1 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(ret1, 0)
+
+        mul_doc = (
+            self.test_dir
+            / ".pystdoc"
+            / "documents"
+            / "src"
+            / "math_ops.c.fn.multiply.md"
+        )
+        self.assertTrue(mul_doc.exists())
+        self.assertIn("return a * b;", mul_doc.read_text(encoding="utf-8"))
+
+        # Modify multiply's internal code (add log) without changing signature
+        import time
+        time.sleep(0.05)
+        c_file.write_text(
+            "int multiply(int a, int b) {\n"
+            "    int res = a * b;\n"
+            "    return res;\n"
+            "}\n"
+            "int compute(int x) {\n"
+            "    return multiply(x, 2);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        ret2 = run_docgen(
+            target_dir=self.test_dir,
+            use_llm=False,
+            allow_fallback=True,
+            language="English",
+        )
+        self.assertEqual(ret2, 0)
+        # Even with early stopping, the code snippet in multiply.md is updated
+        updated_text = mul_doc.read_text(encoding="utf-8")
+        self.assertIn("int res = a * b;", updated_text)
+
 
 if __name__ == "__main__":
     unittest.main()

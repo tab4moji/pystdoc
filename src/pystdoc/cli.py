@@ -10,7 +10,7 @@ from pystdoc.config import detect_terminal_language, load_config
 from pystdoc.db import DocgenDB
 from pystdoc.design_engine import run_design_generation
 from pystdoc.engine import run_docgen
-from pystdoc.llm_client import LLMClient
+from pystdoc.llm_client import LLMClient, set_debug_mode
 from pystdoc.progress import is_terminal
 from pystdoc.query import (
     run_description,
@@ -23,6 +23,28 @@ from pystdoc.query import (
 )
 from pystdoc.interrupt import KeyboardInterruptWatcher, safe_exit
 from pystdoc.report_engine import generate_readme_doc
+
+
+def normalize_step_identifier(step_val: Optional[str]) -> Optional[int]:
+    """Normalize step number or name (1..4, docgen, designgen, reportgen)."""
+    if not step_val:
+        return None
+    s = str(step_val).strip().lower()
+    if s in ("1", "docgen", "symbol", "symbols"):
+        return 1
+    elif s in ("2", "data", "variable", "variables", "var"):
+        return 2
+    elif s in ("3", "designgen", "design", "architecture", "models"):
+        return 3
+    elif s in ("4", "reportgen", "report", "readme"):
+        return 4
+    try:
+        val = int(s)
+        if 1 <= val <= 4:
+            return val
+    except ValueError:
+        pass
+    return None
 
 
 def docgen_main(argv: Optional[List[str]] = None) -> None:
@@ -70,6 +92,12 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
         help="LLM context window size",
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max output tokens for LLM generation",
+    )
+    parser.add_argument(
         "--language",
         "-l",
         default=None,
@@ -99,8 +127,15 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Number of parallel LLM workers",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable realtime LLM debug logging to tmp.debug.log",
+    )
 
     args = parser.parse_args(argv)
+    if getattr(args, "debug", False):
+        set_debug_mode(True)
     target = Path(args.dir)
     cfg = load_config(target)
 
@@ -108,6 +143,7 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
+    max_tokens = args.max_tokens or cfg.get("max_tokens", 16384)
     lang = args.language or cfg.get("language") or detect_terminal_language()
     concurrency = args.concurrency or cfg.get("concurrency", 1)
     allow_fallback = (
@@ -126,6 +162,7 @@ def docgen_main(argv: Optional[List[str]] = None) -> None:
                 model=model,
                 token=token,
                 context_size=ctx_size,
+                max_tokens=max_tokens,
                 language=lang,
                 force=args.force,
                 allow_fallback=allow_fallback,
@@ -188,6 +225,12 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
         help="LLM context window size",
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max output tokens for LLM generation",
+    )
+    parser.add_argument(
         "--language",
         "-l",
         default=None,
@@ -205,8 +248,15 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Allow fallback to static template on LLM failure",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable realtime LLM debug logging to tmp.debug.log",
+    )
 
     args = parser.parse_args(argv)
+    if getattr(args, "debug", False):
+        set_debug_mode(True)
     target = Path(args.dir)
     cfg = load_config(target)
 
@@ -214,6 +264,7 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
+    max_tokens = args.max_tokens or cfg.get("max_tokens", 16384)
     lang = args.language or cfg.get("language") or detect_terminal_language()
     allow_fallback = (
         args.allow_fallback
@@ -231,6 +282,7 @@ def designgen_main(argv: Optional[List[str]] = None) -> None:
                 model=model,
                 token=token,
                 context_size=ctx_size,
+                max_tokens=max_tokens,
                 language=lang,
                 force=args.force,
                 allow_fallback=allow_fallback,
@@ -297,6 +349,7 @@ def run_watch(
     model: Optional[str] = None,
     token: Optional[str] = None,
     context_size: int = 16384,
+    max_tokens: int = 16384,
     concurrency: int = 1,
     language: Optional[str] = None,
     allow_fallback: bool = False,
@@ -318,6 +371,7 @@ def run_watch(
             model=model,
             token=token,
             context_size=context_size,
+            max_tokens=max_tokens,
             language=language,
             force=False,
             allow_fallback=allow_fallback,
@@ -334,6 +388,7 @@ def run_watch(
             model=model,
             token=token,
             context_size=context_size,
+            max_tokens=max_tokens,
             language=language,
             force=False,
             allow_fallback=allow_fallback,
@@ -348,6 +403,7 @@ def run_watch(
                 model=model,
                 token=token,
                 context_size=context_size,
+                max_tokens=max_tokens,
             )
             if client.check_availability():
                 llm_client = client
@@ -584,6 +640,12 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         help="LLM context window size",
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max output tokens for LLM generation",
+    )
+    parser.add_argument(
         "--language",
         "-l",
         default=None,
@@ -630,13 +692,32 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         help="Continuously watch for code changes (dnotify) and auto-sync",
     )
     parser.add_argument(
+        "--from-step",
+        dest="from_step",
+        default=None,
+        help="Start from step (1..4, docgen, design, report)",
+    )
+    parser.add_argument(
+        "--step",
+        dest="single_step",
+        default=None,
+        help="Run step only (1..4, docgen, design, report)",
+    )
+    parser.add_argument(
         "--interval",
         type=float,
         default=1.0,
         help="Debounce interval in seconds for watch mode (default: 1.0)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable realtime LLM debug logging to tmp.debug.log",
+    )
 
     args = parser.parse_args(sub_args)
+    if getattr(args, "debug", False):
+        set_debug_mode(True)
     target_dir = Path(args.dir).resolve()
 
     if not target_dir.exists() or not target_dir.is_dir():
@@ -652,6 +733,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
     model = args.model or cfg.get("model", "gemma4-26b-a4b")
     token = args.token or args.api_key or cfg.get("token")
     ctx_size = args.context_size or cfg.get("context_size", 16384)
+    max_tokens = args.max_tokens or cfg.get("max_tokens", 16384)
     lang = args.language or cfg.get("language") or detect_terminal_language()
     concurrency = args.concurrency or cfg.get("concurrency", 1)
     allow_fallback = (
@@ -659,6 +741,39 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         if args.allow_fallback is not None
         else cfg.get("allow_fallback", False)
     )
+
+    start_step = 1
+    end_step = 4
+
+    if args.from_step:
+        norm_from = normalize_step_identifier(args.from_step)
+        if norm_from is None:
+            print(
+                f"Error: Invalid --from-step value: '{args.from_step}'. "
+                f"Valid steps: 1 (docgen), 2 (data), 3 (design), 4 (report)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        start_step = norm_from
+        args.force = True
+
+    if args.single_step:
+        norm_step = normalize_step_identifier(args.single_step)
+        if norm_step is None:
+            print(
+                f"Error: Invalid --step value: '{args.single_step}'. "
+                f"Valid steps: 1 (docgen), 2 (data), 3 (design), 4 (report)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        start_step = norm_step
+        end_step = norm_step
+        args.force = True
+
+    if start_step > 1:
+        args.skip_docgen = True
+    if start_step > 3 or end_step < 3:
+        args.skip_designgen = True
 
     if subcmd == "watch" or args.watch:
         sys.exit(
@@ -669,6 +784,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                 model=model,
                 token=token,
                 context_size=ctx_size,
+                max_tokens=max_tokens,
                 concurrency=concurrency,
                 language=lang,
                 allow_fallback=allow_fallback,
@@ -679,13 +795,21 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
         )
 
     is_tty = is_terminal(sys.stdout)
-    pipeline_mode_label = " (Fast bottom-up)" if args.fast else ""
+    step_range_label = ""
+    if args.fast:
+        step_range_label = " (Fast bottom-up)"
+    elif start_step > 1 or end_step < 4:
+        if start_step == end_step:
+            step_range_label = f" (Step {start_step}/4 only)"
+        else:
+            step_range_label = f" (Steps {start_step}-{end_step}/4)"
+
     hint_msg = " [Ctrl-C or 'q' to abort safely]" if is_tty else ""
 
     print("=" * 64)
     hdr = (
         f"=== pystdoc Unified Pipeline v{pystdoc.__version__}"
-        f"{pipeline_mode_label} (Lang: {lang}): {target_dir}{hint_msg} ==="
+        f"{step_range_label} (Lang: {lang}): {target_dir}{hint_msg} ==="
     )
     print(hdr)
     print("=" * 64)
@@ -710,6 +834,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                     model=model,
                     token=token,
                     context_size=ctx_size,
+                    max_tokens=max_tokens,
                     language=lang,
                     force=args.force,
                     allow_fallback=allow_fallback,
@@ -742,6 +867,7 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                     model=model,
                     token=token,
                     context_size=ctx_size,
+                    max_tokens=max_tokens,
                     language=lang,
                     force=args.force,
                     allow_fallback=allow_fallback,
@@ -751,47 +877,56 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                     sys.exit(ret_design)
 
             # 3. reportgen (Step 4/4)
-            print(
-                "\n>>> [Step 4/4] reportgen: "
-                "Generating project overview README (.pystdoc/README.md)..."
-            )
-
-            llm_client = None
-            if not args.no_llm:
-                client = LLMClient(
-                    host=host,
-                    model=model,
-                    token=token,
-                    context_size=ctx_size,
+            if start_step <= 4 <= end_step:
+                print(
+                    "\n>>> [Step 4/4] reportgen: Generating project overview "
+                    "README (.pystdoc/README.md)..."
                 )
-                if client.check_availability():
-                    llm_client = client
-                else:
-                    print(
-                        f"Error: Failed to connect to LLM server "
-                        f"({client.base_url}). Aborting.",
-                        file=sys.stderr,
+
+                llm_client = None
+                if not args.no_llm:
+                    client = LLMClient(
+                        host=host,
+                        model=model,
+                        token=token,
+                        context_size=ctx_size,
+                        max_tokens=max_tokens,
                     )
-                    sys.exit(1)
+                    if client.check_availability():
+                        llm_client = client
+                    else:
+                        print(
+                            f"Error: Failed to connect to LLM server "
+                            f"({client.base_url}). Aborting.",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
 
-            db_path = target_dir / ".pystdoc" / "index.db"
-            db = DocgenDB(db_path) if db_path.exists() else None
+                db_path = target_dir / ".pystdoc" / "index.db"
+                db = DocgenDB(db_path) if db_path.exists() else None
 
-            generate_readme_doc(
-                target_dir=target_dir,
-                llm_client=llm_client,
-                language=lang,
-                force=args.force,
-                allow_fallback=allow_fallback,
-                db=db,
-                is_tty=is_tty,
-            )
+                generate_readme_doc(
+                    target_dir=target_dir,
+                    llm_client=llm_client,
+                    language=lang,
+                    force=args.force,
+                    allow_fallback=allow_fallback,
+                    db=db,
+                    is_tty=is_tty,
+                )
 
-            out_readme = target_dir / ".pystdoc" / "README.md"
+                out_readme = target_dir / ".pystdoc" / "README.md"
 
-            print("=" * 64)
-            print(f"=== reportgen Finished: Created {out_readme} ===")
-            print("=" * 64)
+                print("=" * 64)
+                print(f"=== reportgen Finished: Created {out_readme} ===")
+                print("=" * 64)
+            else:
+                print("=" * 64)
+                print(
+                    f"=== pystdoc Pipeline Finished: "
+                    f"Step {start_step}..{end_step} complete ==="
+                )
+                print("=" * 64)
             sys.exit(0)
         except KeyboardInterrupt:
             print(
@@ -801,3 +936,6 @@ def reportgen_main(argv: Optional[List[str]] = None) -> None:
                 flush=True,
             )
             safe_exit(130)
+
+
+pystdoc_main = reportgen_main
