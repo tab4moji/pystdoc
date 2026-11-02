@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for docgen."""
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -154,7 +155,18 @@ class TestDocgen(unittest.TestCase):
         self.assertIn("## 1. Basic Information", doc_en)
         self.assertIn("Executes `add` operations.", doc_en)
 
-        # Japanese option
+        # Japanese option with pre-existing / customized document_labels.json
+        labels_path = self.test_dir / ".pystdoc" / "document_labels.json"
+        labels_path.parent.mkdir(parents=True, exist_ok=True)
+        labels_path.write_text(
+            json.dumps({
+                "language": "Japanese",
+                "doc_title_template": "{kind}仕様書: `{name}`",
+                "basic_info_title": "## 1. 基本情報",
+                "kind_function": "関数",
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
         res_ja = run_docgen(
             target_dir=self.test_dir,
             use_llm=False,
@@ -166,7 +178,8 @@ class TestDocgen(unittest.TestCase):
         doc_ja = (
             self.test_dir / ".pystdoc" / "documents" / "src" / "sample.c.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("## 1. Basic Information", doc_ja)
+        self.assertIn("## 1. 基本情報", doc_ja)
+        self.assertIn("関数仕様書: `add`", doc_ja)
         self.assertIn("`add` の処理を実行する。", doc_ja)
 
     def test_llm_client_host_and_token(self):

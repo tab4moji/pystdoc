@@ -40,6 +40,48 @@ class MockLLMHandler(BaseHTTPRequestHandler):
 
         if MockLLMHandler.return_broken_json:
             resp_text = "Here is broken result { invalid json"
+        elif (
+            "localizer" in req_body.lower()
+            or "doc_title_template" in req_body.lower()
+        ):
+            resp_text = json.dumps({
+                "language": "Japanese",
+                "doc_title_template": "{kind}仕様書: `{name}`",
+                "basic_info_title": "## 1. 基本情報",
+                "label_name": "名前",
+                "label_fqdn": "FQDN",
+                "label_symbol_kind": "シンボル種別",
+                "label_location": "定義位置",
+                "location_template": "{start}行目から{end}行目",
+                "label_signature": "シグネチャ / 型",
+                "parameters_title": "## 2. パラメータ",
+                "label_none": "なし",
+                "input_return_title": "## 3. 入力・戻り値の仕様",
+                "label_input_constraints": "入力制約",
+                "label_return_type": "戻り値の型",
+                "label_return_value_side_effects": "戻り値と副作用",
+                "label_void_none": "void / なし",
+                "called_functions_title": "## 4. 呼び出し先関数",
+                "referencing_functions_title": "## 4. 参照元関数",
+                "source_code_snippet_title": "## ソースコード",
+                "file_doc_title_template": "ファイル仕様書: `{path}`",
+                "label_file_hash": "ファイル SHA-256",
+                "label_detected_symbols": "検出シンボル数",
+                "symbol_list_title": "## シンボル一覧",
+                "symbol_list_item_template": (
+                    "- `{name}` ({kind}) [{line_range}行]"
+                ),
+                "kind_function": "関数",
+                "kind_class": "クラス",
+                "kind_method": "メソッド",
+                "kind_variable": "変数",
+                "kind_struct": "構造体",
+                "kind_enum": "列挙型",
+                "kind_interface": "インターフェース",
+                "kind_constant": "定数",
+                "kind_type": "型",
+                "kind_module": "モジュール",
+            })
         elif "json" in req_body.lower() or "inputs_note" in req_body.lower():
             resp_text = json.dumps({
                 "role": "Main computation unit.",

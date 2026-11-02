@@ -28,6 +28,7 @@ from pystdoc.doc_writer import (
     write_individual_symbol_docs,
     normalize_language,
 )
+from pystdoc.doc_labels import get_or_init_document_labels
 from pystdoc.llm_client import (
     LLMClient,
     sanitize_architectural_context,
@@ -493,6 +494,10 @@ def run_docgen(
                 )
                 db.close()
                 return 1
+
+        doc_labels = get_or_init_document_labels(
+            target_dir, norm_lang, llm_client=llm_client
+        )
 
         # 1. Scan files
         matched_files = scan_files(target_dir)
@@ -966,6 +971,7 @@ def run_docgen(
                     prefix_name=prefix_in_unique_id,
                     language=norm_lang,
                     symbol_id_override=raw_id if raw_id else None,
+                    labels=doc_labels,
                 )
 
             # Persist latest hash and metadata to SQLite
@@ -1305,6 +1311,7 @@ def run_docgen(
                     v_sym,
                     prefix_name=prefix_in_unique_id,
                     language=norm_lang,
+                    labels=doc_labels,
                 )
             else:
                 with var_rem_lock:
@@ -1342,6 +1349,7 @@ def run_docgen(
                         v_sym,
                         prefix_name=prefix_in_unique_id,
                         language=norm_lang,
+                        labels=doc_labels,
                     )
 
         if var_nodes:
@@ -1421,9 +1429,14 @@ def run_docgen(
                     current_hash,
                     symbols,
                     language=norm_lang,
+                    labels=doc_labels,
                 )
                 ind_docs = write_individual_symbol_docs(
-                    target_dir, rel_path, symbols, language=norm_lang
+                    target_dir,
+                    rel_path,
+                    symbols,
+                    language=norm_lang,
+                    labels=doc_labels,
                 )
                 total_individual_docs += len(ind_docs)
                 db.update_file_hash(rel_path.as_posix(), current_hash)

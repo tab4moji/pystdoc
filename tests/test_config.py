@@ -193,6 +193,97 @@ class TestConfig(unittest.TestCase):
                     cfg = load_config(tmp_path)
                     self.assertEqual(cfg["language"], "Japanese")
 
+    def test_doc_labels_initialization_and_customization(self):
+        from unittest.mock import MagicMock
+        from pystdoc.doc_labels import (
+            get_or_init_document_labels,
+            DEFAULT_ENGLISH_LABELS,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            # 1. English initialization
+            en_labels = get_or_init_document_labels(tmp_path, "English")
+            self.assertEqual(
+                en_labels["basic_info_title"],
+                DEFAULT_ENGLISH_LABELS["basic_info_title"],
+            )
+            labels_file = tmp_path / ".pystdoc" / "document_labels.json"
+            self.assertTrue(labels_file.exists())
+
+            # 2. Japanese initialization with LLM client
+            mock_llm = MagicMock()
+            mock_llm.chat_completion.return_value = json.dumps({
+                "language": "Japanese",
+                "doc_title_template": "{kind}仕様書: `{name}`",
+                "basic_info_title": "## 1. 基本情報",
+                "label_symbol_kind": "シンボル種別",
+                "kind_function": "関数",
+            })
+            ja_labels = get_or_init_document_labels(
+                tmp_path, "Japanese", llm_client=mock_llm
+            )
+            self.assertEqual(ja_labels["basic_info_title"], "## 1. 基本情報")
+            self.assertEqual(ja_labels["label_symbol_kind"], "シンボル種別")
+            self.assertEqual(ja_labels["kind_function"], "関数")
+            self.assertEqual(
+                ja_labels["doc_title_template"], "{kind}仕様書: `{name}`"
+            )
+
+            # 3. Customization in JSON file is preserved
+            loaded = json.loads(labels_file.read_text(encoding="utf-8"))
+            loaded["basic_info_title"] = "## 1. カスタム基本情報"
+            labels_file.write_text(
+                json.dumps(loaded, ensure_ascii=False), encoding="utf-8"
+            )
+
+            custom_labels = get_or_init_document_labels(tmp_path, "Japanese")
+            self.assertEqual(
+                custom_labels["basic_info_title"], "## 1. カスタム基本情報"
+            )
+
+    def test_doc_labels_llm_generation_for_other_languages(self):
+        from pystdoc.doc_labels import get_or_init_document_labels
+        from unittest.mock import MagicMock
+
+        mock_llm = MagicMock()
+        mock_llm.chat_completion.return_value = json.dumps({
+            "language": "German",
+            "basic_info_title": "## 1. Grundlegende Informationen",
+            "label_name": "Name",
+            "label_symbol_kind": "Symbolart",
+            "label_location": "Speicherort",
+            "source_code_snippet_title": "## Quellcode-Ausschnitt",
+        })
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            de_labels = get_or_init_document_labels(
+                tmp_path, "German", llm_client=mock_llm
+            )
+            self.assertEqual(de_labels["language"], "German")
+            self.assertEqual(
+                de_labels["basic_info_title"],
+                "## 1. Grundlegende Informationen",
+            )
+            self.assertEqual(de_labels["label_symbol_kind"], "Symbolart")
+            labels_file = tmp_path / ".pystdoc" / "document_labels.json"
+            self.assertTrue(labels_file.exists())
+            self.assertIn(
+                "Grundlegende", labels_file.read_text(encoding="utf-8")
+            )
+
+            # Next call uses cached file without calling LLM again
+            mock_llm.chat_completion.reset_mock()
+            de_labels_cached = get_or_init_document_labels(
+                tmp_path, "German", llm_client=mock_llm
+            )
+            self.assertEqual(mock_llm.chat_completion.call_count, 0)
+            self.assertEqual(
+                de_labels_cached["basic_info_title"],
+                "## 1. Grundlegende Informationen",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
