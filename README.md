@@ -49,7 +49,7 @@ your_project/
    - Evaluates call graphs in $O(V+E)$ linear time.
    - Automatically breaks cyclic mutual recursions and organizes code symbols into dependency-safe execution levels.
    - Level-by-level parallel LLM execution guarantees context-rich bottom-up summaries without race conditions.
-2. **High-Speed Incremental Sync & Semantic Change Propagation (v0.8.0 - v0.8.4)**:
+2. **High-Speed Incremental Sync & Semantic Change Propagation (v0.8.0 - v0.8.5)**:
    - **Selective Bottom-Up Propagation & Immediate Snippet Flush**: Detects AST and logic-level code differences. If regenerated specifications remain semantically unchanged, cascading LLM re-analysis terminates early while Markdown documents (source code snippets, line ranges, caller/callee references) are immediately updated with latest code. Signature, kind, and callee alterations are guaranteed to propagate upstream.
    - **Content-Defined Map-Reduce Caching**: Intermediate summaries in architecture synthesis (`designgen`) are chunked using stable hash boundaries and cached per group in SQLite, ensuring that only groups containing edited functions are re-summarized.
    - **Architectural Entry-Point Filtering**: For system execution modeling (`execution_model.md`), key architectural functions (entry points, CLI routers, and core dispatchers) are automatically filtered and passed directly into the LLM context, bypassing heavy multi-step Map-Reduce loops and speeding up generation by up to 90%+.

@@ -268,6 +268,85 @@ class TestGracefulInterruptionInEngines(unittest.TestCase):
             self.assertEqual(ret, 0)
             mock_client.explain_symbol.assert_not_called()
 
+    def test_immediate_abort_on_resource_underlying_socket(self):
+        """Verify _abort_resource calls socket.shutdown and close."""
+        import socket
+        mock_sock = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.sock = mock_sock
+
+        InterruptionState.register_resource(mock_resp)
+        InterruptionState.set_interrupted()
+        mock_sock.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+        mock_resp.close.assert_called_once()
+
+    def test_interruptible_sleep_wakes_immediately_via_event(self):
+        """Verify interruptible_sleep wakes immediately without polling."""
+        import threading
+        from pystdoc.interrupt import interruptible_sleep
+
+        with patch(
+            "pystdoc.interrupt.is_test_environment", return_value=False
+        ):
+            def trigger_later():
+                time.sleep(0.05)
+                InterruptionState.set_interrupted()
+
+            t = threading.Thread(target=trigger_later, daemon=True)
+            t.start()
+            start = time.time()
+            with self.assertRaises(KeyboardInterrupt):
+                interruptible_sleep(5.0)
+            elapsed = time.time() - start
+            self.assertLess(elapsed, 0.5)
+
+    def test_llm_request_aborts_immediately_without_waiting_server_response(
+        self,
+    ):
+        """Verify LLM client aborts without waiting for server response."""
+        import http.server
+        import threading
+        from pystdoc.llm_client import LLMClient
+
+        class HangingHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                # Hang without sending response headers
+                time.sleep(5.0)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), HangingHandler)
+        port = server.server_port
+        server_thread = threading.Thread(
+            target=server.serve_forever, daemon=True
+        )
+        server_thread.start()
+
+        try:
+            client = LLMClient(
+                host=f"http://127.0.0.1:{port}", model="test-hang"
+            )
+
+            def trigger_abort():
+                time.sleep(0.05)
+                InterruptionState.set_interrupted()
+
+            t = threading.Thread(target=trigger_abort, daemon=True)
+            t.start()
+
+            start = time.time()
+            with self.assertRaises(KeyboardInterrupt):
+                client.chat_completion([{"role": "user", "content": "hi"}])
+            elapsed = time.time() - start
+            # Must abort well before server's 5s sleep finishes
+            self.assertLess(elapsed, 1.0)
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

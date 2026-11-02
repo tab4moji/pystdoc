@@ -997,19 +997,26 @@ def run_docgen(
                     executor.submit(process_single_node, node)
                     for node in lvl_nodes
                 ]
-                for f in concurrent.futures.as_completed(futures):
+                pending = set(futures)
+                while pending:
                     InterruptionState.check_interrupted()
-                    try:
-                        f.result()
-                    except KeyboardInterrupt:
-                        InterruptionState.set_interrupted()
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        raise
-                    except Exception as e:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        print(f"\nError: {e}", file=sys.stderr, flush=True)
-                        db.close()
-                        return 1
+                    done, pending = concurrent.futures.wait(
+                        pending,
+                        timeout=0.2,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    for f in done:
+                        try:
+                            f.result()
+                        except KeyboardInterrupt:
+                            InterruptionState.set_interrupted()
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise
+                        except Exception as e:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            print(f"\nError: {e}", file=sys.stderr, flush=True)
+                            db.close()
+                            return 1
             except KeyboardInterrupt:
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
@@ -1362,19 +1369,26 @@ def run_docgen(
                 futures = [
                     executor.submit(process_var_node, v) for v in var_nodes
                 ]
-                for f in concurrent.futures.as_completed(futures):
+                pending = set(futures)
+                while pending:
                     InterruptionState.check_interrupted()
-                    try:
-                        f.result()
-                    except KeyboardInterrupt:
-                        InterruptionState.set_interrupted()
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        raise
-                    except Exception as e:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        print(f"\nError: {e}", file=sys.stderr, flush=True)
-                        db.close()
-                        return 1
+                    done, pending = concurrent.futures.wait(
+                        pending,
+                        timeout=0.2,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    for f in done:
+                        try:
+                            f.result()
+                        except KeyboardInterrupt:
+                            InterruptionState.set_interrupted()
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise
+                        except Exception as e:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            print(f"\nError: {e}", file=sys.stderr, flush=True)
+                            db.close()
+                            return 1
             except KeyboardInterrupt:
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise

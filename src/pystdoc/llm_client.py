@@ -1,6 +1,7 @@
 """LLM Client for LiteRT-LM, Ollama, and OpenAI-compatible endpoints."""
 
 import datetime
+import http.client
 import json
 import os
 import re
@@ -14,6 +15,52 @@ from typing import Any, Dict, List, Optional
 
 from pystdoc.interrupt import InterruptionState, interruptible_sleep
 from pystdoc.perf import PerfProfileManager
+
+
+class _InterruptibleHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection registering socket to InterruptionState on connect."""
+
+    def connect(self) -> None:
+        InterruptionState.check_interrupted()
+        super().connect()
+        if self.sock is not None:
+            InterruptionState.register_resource(self.sock)
+
+    def close(self) -> None:
+        if self.sock is not None:
+            InterruptionState.unregister_resource(self.sock)
+        super().close()
+
+
+class _InterruptibleHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection registering socket to InterruptionState on connect."""
+
+    def connect(self) -> None:
+        InterruptionState.check_interrupted()
+        super().connect()
+        if self.sock is not None:
+            InterruptionState.register_resource(self.sock)
+
+    def close(self) -> None:
+        if self.sock is not None:
+            InterruptionState.unregister_resource(self.sock)
+        super().close()
+
+
+class _InterruptibleHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req: urllib.request.Request):
+        return self.do_open(_InterruptibleHTTPConnection, req)
+
+
+class _InterruptibleHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req: urllib.request.Request):
+        return self.do_open(_InterruptibleHTTPSConnection, req)
+
+
+_interruptible_opener = urllib.request.build_opener(
+    _InterruptibleHTTPHandler, _InterruptibleHTTPSHandler
+)
+urllib.request.install_opener(_interruptible_opener)
 
 _debug_log_lock = threading.Lock()
 DEBUG_LOG_PATH = Path(os.environ.get("PYSTDOC_DEBUG_LOG", "tmp.debug.log"))
@@ -478,6 +525,7 @@ class LLMClient:
                 req.add_header("Authorization", f"Bearer {self.token}")
 
             try:
+                InterruptionState.check_interrupted()
                 resp = urllib.request.urlopen(req, timeout=req_timeout)
                 InterruptionState.register_resource(resp)
                 try:
