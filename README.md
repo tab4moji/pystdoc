@@ -36,6 +36,7 @@ your_project/
 │   │   ├── src/main.c.fn.main.md     # Individual symbol document (with call graph & context)
 │   │   └── ...
 │   ├── files.txt                     # List of scanned source files
+│   ├── document_labels.json          # Localized titles/headings (editable)
 │   └── index.db                      # SQLite WAL database for instantaneous incremental caching
 ├── src/
 └── ...
@@ -73,6 +74,9 @@ your_project/
 8. **Standard LLM Options & Multi-Language Support**:
    - Works with **Ollama, LiteRT-LM, vLLM, and OpenAI API**.
    - Supports `--host`, `--model`, `--token` / `--api-key`, `--context-size`, and `--language` (defaults to terminal language, e.g. `Japanese`, `English`, `日本語`).
+   - **Localized Headings & Titles (v0.8.7)**: Titles and section headings of all outputs — symbol documents (`documents/`), architecture design documents (`design/`: `overview.md`, `data_models.md`, `execution_model.md`, `modules/*.md`), and the README — are translated into the target language and stored in `.pystdoc/document_labels.json` (design/README headings were previously always English).
+   - **Robust Label Translation for Small LLMs (v0.8.7)**: Labels are translated in small chunks with retry, so small local models (e.g. `gemma4:e2b`) work. If translation is incomplete, a warning is printed and only the untranslated labels are retried on the next run; manual edits to `document_labels.json` are preserved. To re-localize existing English output, delete `.pystdoc/document_labels.json` and re-run with `--force`.
+   - `designgen` parses symbol documents using the localized headings, so it works with documents written in any language.
 
 ---
 

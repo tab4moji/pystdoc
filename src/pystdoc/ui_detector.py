@@ -278,6 +278,7 @@ def annotate_documents_with_ui_context(
     ui_info: Dict[str, Any],
     language: str = "English",
     force: bool = False,
+    labels: Optional[Dict[str, str]] = None,
 ) -> int:
     """Bottom-up pass: Annotate symbol documents with inferred UI context."""
     if not documents_dir.exists():
@@ -288,11 +289,29 @@ def annotate_documents_with_ui_context(
     ui_type = ui_info.get("ui_type", "Library")
     framework = ui_info.get("framework", "None")
 
-    section_header = (
+    legacy_header = (
         "## UI & Interaction Role"
         if not is_ja
         else "## UI・ユーザー操作における役割"
     )
+    section_header = (
+        labels.get("ui_role_title") or legacy_header if labels
+        else legacy_header
+    )
+    lbl_ui_type = (labels or {}).get("label_ui_type") or "UI Type"
+    lbl_ui_inter = (
+        (labels or {}).get("label_ui_interaction")
+        or "Interaction Specification"
+    )
+    snippet_title = (
+        (labels or {}).get("source_code_snippet_title")
+        or "## Source Code Snippet"
+    )
+    # Headers that may already exist in documents (current/legacy/English)
+    known_headers = []
+    for h in (section_header, legacy_header, "## UI & Interaction Role"):
+        if h not in known_headers:
+            known_headers.append(h)
 
     all_mds = sorted(list(set(
         list(documents_dir.glob("*.md")) + list(documents_dir.glob("**/*.md"))
@@ -304,16 +323,17 @@ def annotate_documents_with_ui_context(
             continue
 
         text = md_path.read_text(encoding="utf-8", errors="replace")
-        if section_header in text:
+        if any(h in text for h in known_headers):
             if not force:
                 continue
             # Remove existing UI annotation block cleanly before re-annotating
-            pat = (
-                r"\n*"
-                + re.escape(section_header)
-                + r"[\s\S]*?(?=\n## |\Z)"
-            )
-            text = re.sub(pat, "", text)
+            for h in known_headers:
+                pat = (
+                    r"\n*"
+                    + re.escape(h)
+                    + r"[\s\S]*?(?=\n## |\Z)"
+                )
+                text = re.sub(pat, "", text)
 
         sym_data = {
             "file_name": md_path.name,
@@ -340,15 +360,18 @@ def annotate_documents_with_ui_context(
 
         ui_block = (
             f"\n{section_header}\n"
-            f"- **UI Type**: `{ui_type}` ({framework})\n"
-            f"- **Interaction Specification**: {ui_role}\n"
+            f"- **{lbl_ui_type}**: `{ui_type}` ({framework})\n"
+            f"- **{lbl_ui_inter}**: {ui_role}\n"
         )
 
-        if "## Source Code Snippet" in text:
-            parts = text.split("## Source Code Snippet", 1)
+        snippet_key = snippet_title
+        if snippet_key not in text:
+            snippet_key = "## Source Code Snippet"
+        if snippet_key in text:
+            parts = text.split(snippet_key, 1)
             new_text = (
                 parts[0].rstrip()
-                + f"\n{ui_block}\n## Source Code Snippet"
+                + f"\n{ui_block}\n{snippet_key}"
                 + parts[1]
             )
         else:

@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional
 
 from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
+from pystdoc.doc_labels import (
+    DEFAULT_ENGLISH_LABELS,
+    get_or_init_document_labels,
+)
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
 from pystdoc.perf import PerfProfileManager
@@ -21,9 +25,75 @@ from pystdoc.ui_detector import (
 )
 
 
-def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
+def _heading_text(label: str) -> str:
+    """Strip Markdown '#' marker and section number from a heading label."""
+    return re.sub(r"^#+\s*(?:\d+\.\s*)?", "", label).strip()
 
-    """Parse key sections from an individual symbol or file markdown doc."""
+
+def _alt(*labels: Optional[str]) -> str:
+    """Regex alternation of escaped, de-duplicated, non-empty labels."""
+    uniq = []
+    for lb in labels:
+        if lb and lb not in uniq:
+            uniq.append(lb)
+    return "|".join(re.escape(x) for x in uniq)
+
+
+def _lbl(labels: Optional[Dict[str, str]], key: str) -> str:
+    """Return labels[key], falling back to the English default."""
+    if labels and labels.get(key):
+        return labels[key]
+    return DEFAULT_ENGLISH_LABELS[key]
+
+
+def _resolve_labels(
+    labels: Optional[Dict[str, str]],
+    target_dir: Path,
+    language: str,
+    llm_client: Optional[LLMClient],
+) -> Dict[str, str]:
+    """Return localized labels (loading/initializing them when needed)."""
+    if labels is not None:
+        return labels
+    return get_or_init_document_labels(
+        target_dir, language, llm_client=llm_client
+    )
+
+
+def parse_symbol_doc(
+    md_path: Path,
+    labels: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Parse key sections from an individual symbol or file markdown doc.
+
+    Section headings are matched against both the English defaults and the
+    localized `labels` so that localized documents are parsed correctly.
+    """
+    en = DEFAULT_ENGLISH_LABELS
+    kind_alt = _alt(
+        "Symbol Kind", "Kind", _lbl(labels, "label_symbol_kind")
+    )
+    sig_alt = _alt(
+        "Signature", "Type", _lbl(labels, "label_signature")
+    )
+    callees_alt = _alt(
+        _heading_text(en["called_functions_title"]),
+        _heading_text(_lbl(labels, "called_functions_title")),
+    )
+    refs_alt = _alt(
+        "Referencing Functions",
+        "References",
+        _heading_text(en["referencing_functions_title"]),
+        _heading_text(_lbl(labels, "referencing_functions_title")),
+    )
+    ui_alt = _alt(
+        _heading_text(en["ui_role_title"]),
+        "UI・ユーザー操作における役割",
+        _heading_text(_lbl(labels, "ui_role_title")),
+    )
+    none_vals = {
+        "None", "none", en["label_none"], _lbl(labels, "label_none"),
+    }
     text = md_path.read_text(encoding="utf-8", errors="replace")
     data = {
         "file_name": md_path.name,
@@ -59,7 +129,7 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
 
     # 2. Extract Kind & Signature
     m_kind = re.search(
-        r"- \*\*(?:Symbol Kind|Kind)[^*]*\*\*:\s*`?([^`\n]+)`?",
+        r"- \*\*(?:" + kind_alt + r")[^*]*\*\*:\s*`?([^`\n]+)`?",
         text,
         re.IGNORECASE,
     )
@@ -67,7 +137,7 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
         data["kind"] = m_kind.group(1).strip()
 
     m_sig = re.search(
-        r"- \*\*(?:Signature|Type)[^*]*\*\*:\s*`?([^`\n]+)`?",
+        r"- \*\*(?:" + sig_alt + r")[^*]*\*\*:\s*`?([^`\n]+)`?",
         text,
         re.IGNORECASE,
     )
@@ -76,18 +146,16 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
 
     # 3. Extract Callees & Referencing Functions
     m_callees = re.search(
-        r"## \d+\..*Called Functions.*\n([\s\S]*?)(?=\n## |\Z)",
+        r"## \d+\..*(?:" + callees_alt + r").*\n([\s\S]*?)(?=\n## |\Z)",
         text,
         re.IGNORECASE,
     )
     if m_callees:
         callee_lines = re.findall(r"- `([^`]+)`", m_callees.group(1))
-        data["callees"] = [
-            c for c in callee_lines if c not in ("None", "none")
-        ]
+        data["callees"] = [c for c in callee_lines if c not in none_vals]
 
     m_refs = re.search(
-        r"## \d+\..*(?:Referencing Functions|References).*\n"
+        r"## \d+\..*(?:" + refs_alt + r").*\n"
         r"([\s\S]*?)(?=\n## |\Z)",
         text,
         re.IGNORECASE,
@@ -95,12 +163,12 @@ def parse_symbol_doc(md_path: Path) -> Dict[str, Any]:
     if m_refs:
         ref_lines = re.findall(r"- `([^`]+)`", m_refs.group(1))
         data["referencing_funcs"] = [
-            r for r in ref_lines if r not in ("None", "none")
+            r for r in ref_lines if r not in none_vals
         ]
 
     # 4. Extract UI & Interaction Role
     m_ui = re.search(
-        r"## .*(?:UI & Interaction Role|UI・ユーザー操作における役割).*\n"
+        r"## .*(?:" + ui_alt + r").*\n"
         r"([\s\S]*?)(?=\n## |\Z)",
         text,
         re.IGNORECASE,
@@ -371,9 +439,11 @@ def generate_data_models_doc(
     force: bool = False,
     allow_fallback: bool = False,
     tracker: Optional[PhaseProgressTracker] = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> str:
     """Step 1: Generate data_models.md with SQLite cache & Map-Reduce."""
     norm_lang = normalize_language(language)
+    labels = _resolve_labels(labels, target_dir, norm_lang, llm_client)
     types_raw = [
         f"- Type `{d['file_name']}` (Signature: `{d['signature']}`): "
         f"{d['purpose'][:150]}"
@@ -385,7 +455,10 @@ def generate_data_models_doc(
         for d in var_docs
     ]
 
-    combined_input = f"{norm_lang}\n" + "\n".join(types_raw + vars_raw)
+    combined_input = (
+        f"{norm_lang}\n{labels['design_data_models_title']}\n"
+        + "\n".join(types_raw + vars_raw)
+    )
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"design::data_models::{norm_lang}"
     out_file = target_dir / ".pystdoc" / "design" / "data_models.md"
@@ -454,26 +527,27 @@ data structures, their responsibilities, and how data moves through the system.
 ### Defined Variables & Fields:
 {reduced_vars_summary}
 
-Structure the Markdown as follows:
-# Data Structure Design & Data Models
+Structure the Markdown as follows
+(use these headings exactly as written, do not translate or alter them):
+{labels["design_data_models_title"]}
 
-## 1. Architectural Role & Design Intent
+{labels["design_data_models_sec1"]}
 (Concise 2-3 sentences: what domain models exist and their concrete role)
 
-## 2. Core Data Structures
+{labels["design_data_models_sec2"]}
 (Table/bullets of structs/classes/enums with fields and factual roles)
 
-## 3. Data Lifecycle & Flow
+{labels["design_data_models_sec3"]}
 (Factual flow: instantiation, mutations, parameter passing, and cleanup)
 
-## 4. Constraints & State Invariants
+{labels["design_data_models_sec4"]}
 (Concrete validations, state constraints, and concurrency rules)
 """
 
     default_data_models = (
-        "# Data Structure Design & Data Models\n\n"
-        "## 1. Architectural Role & Design Intent\n"
-        "Provides core data structure definitions and domain models.\n"
+        f"{labels['design_data_models_title']}\n\n"
+        f"{labels['design_data_models_sec1']}\n"
+        f"{labels['design_data_models_default']}\n"
     )
     sys_msg = (
         f"You are an objective software architect. "
@@ -588,9 +662,11 @@ def generate_execution_model_doc(
     allow_fallback: bool = False,
     ui_info: Optional[Dict[str, Any]] = None,
     tracker: Optional[PhaseProgressTracker] = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> str:
     """Step 2: Generate execution_model.md with filtered functions."""
     norm_lang = normalize_language(language)
+    labels = _resolve_labels(labels, target_dir, norm_lang, llm_client)
 
     # 1. Filter to core entry points and high-level callers
     arch_funcs = select_architectural_functions(fn_docs, max_count=60)
@@ -605,7 +681,10 @@ def generate_execution_model_doc(
         )
         funcs_raw.append(line_desc)
 
-    combined_input = f"{norm_lang}\n" + "\n".join(funcs_raw)
+    combined_input = (
+        f"{norm_lang}\n{labels['design_execution_title']}\n"
+        + "\n".join(funcs_raw)
+    )
     input_hash = hashlib.sha256(combined_input.encode("utf-8")).hexdigest()
     cache_key = f"design::execution_model::{norm_lang}"
     out_file = target_dir / ".pystdoc" / "design" / "execution_model.md"
@@ -668,26 +747,27 @@ concrete runtime execution pattern, entry points, dispatching, and flow.
 ### Function Call Structures:
 {reduced_funcs_summary}
 
-Structure the Markdown as follows:
-# System Execution Model & Runtime Architecture
+Structure the Markdown as follows
+(use these headings exactly as written, do not translate or alter them):
+{labels["design_execution_title"]}
 
-## 1. Runtime Architecture Pattern
+{labels["design_execution_sec1"]}
 (Concise 2-3 sentences: identify concrete pattern e.g. MVVM, Event-Driven)
 
-## 2. Execution Flow from Entry Point to Termination
+{labels["design_execution_sec2"]}
 (Step-by-step sequence: startup, initialization, main loop, and teardown)
 
-## 3. Concurrency, Asynchrony & Lifecycle
+{labels["design_execution_sec3"]}
 (Concrete thread model, coroutines/async tasks, and cleanup handling)
 
-## 4. Error Handling & Failure Modes
+{labels["design_execution_sec4"]}
 (Exception propagation, error returns, recovery, and failure boundaries)
 """
 
     default_exec_model = (
-        "# System Execution Model & Runtime Architecture\n\n"
-        "## 1. Runtime Architecture Pattern\n"
-        "Provides system execution flow and runtime architecture.\n"
+        f"{labels['design_execution_title']}\n\n"
+        f"{labels['design_execution_sec1']}\n"
+        f"{labels['design_execution_default']}\n"
     )
     sys_msg = (
         f"You are an objective software architect. "
@@ -765,9 +845,11 @@ def generate_module_docs(
     force: bool = False,
     allow_fallback: bool = False,
     tracker: Optional[PhaseProgressTracker] = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
     """Step 3: Generate module docs with SQLite caching per module."""
     norm_lang = normalize_language(language)
+    labels = _resolve_labels(labels, target_dir, norm_lang, llm_client)
     module_summaries = {}
 
     for mod_name, docs in modules.items():
@@ -776,7 +858,10 @@ def generate_module_docs(
             f"- `{d['file_name']}` ({d['kind']}): {d['purpose'][:120]}"
             for d in docs
         ]
-        combined_input = f"{norm_lang}\n" + "\n".join(doc_lines)
+        combined_input = (
+            f"{norm_lang}\n{labels['design_module_sec1']}\n"
+            + "\n".join(doc_lines)
+        )
         input_hash = hashlib.sha256(
             combined_input.encode("utf-8")
         ).hexdigest()
@@ -820,6 +905,9 @@ def generate_module_docs(
             tracker=tracker,
         )
 
+        mod_title = labels["design_module_title_template"].replace(
+            "{name}", mod_name
+        )
         prompt = f"""Please analyze elements in module `{mod_name}`
 and create a concise, factual module design in {norm_lang}.
 Output Language: {norm_lang} (Write all text in {norm_lang}).
@@ -831,27 +919,30 @@ responsibilities, public interfaces, and component interactions directly.
 ### Module Elements:
 {reduced_module_elements}
 
-Structure the Markdown as follows:
-# Module Design: `{mod_name}`
+Structure the Markdown as follows
+(use these headings exactly as written, do not translate or alter them):
+{mod_title}
 
-## 1. Module Responsibility & Role
+{labels["design_module_sec1"]}
 (Concise 2-3 sentences: what concrete responsibility this module has)
 
-## 2. Public Interfaces & Exported Symbols
+{labels["design_module_sec2"]}
 (List/table of public functions, classes, and types with their exact roles)
 
-## 3. Internal Data Flow & Processing
+{labels["design_module_sec3"]}
 (Factual flow of data processing and state transformation in this module)
 
-## 4. Dependencies & Inter-Module Interactions
+{labels["design_module_sec4"]}
 (Direct dependencies: upstream caller modules and downstream callee modules)
 """
 
         default_mod_doc = (
-            f"# Module Design: `{mod_name}`\n\n"
-            "## 1. Module Responsibility & Role\n"
-            f"Defines responsibilities and public interfaces for "
-            f"module `{mod_name}`.\n"
+            f"{mod_title}\n\n"
+            f"{labels['design_module_sec1']}\n"
+            + labels["design_module_default_template"].replace(
+                "{name}", mod_name
+            )
+            + "\n"
         )
         sys_msg = (
             f"You are an objective software architect. "
@@ -934,9 +1025,11 @@ def generate_overview_doc(
     allow_fallback: bool = False,
     ui_info: Optional[Dict[str, Any]] = None,
     tracker: Optional[PhaseProgressTracker] = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> str:
     """Step 4: Generate overview.md with SQLite cache & Mermaid synthesis."""
     norm_lang = normalize_language(language)
+    labels = _resolve_labels(labels, target_dir, norm_lang, llm_client)
     mod_lines = []
     for mod_name, content in module_summaries.items():
         first_lines = " / ".join(
@@ -947,7 +1040,8 @@ def generate_overview_doc(
         mod_lines.append(f"- Module `{mod_name}`: {first_lines[:150]}")
 
     combined_input = (
-        f"{norm_lang}\n{data_models_content[:600]}\n"
+        f"{norm_lang}\n{labels['design_overview_title']}\n"
+        f"{data_models_content[:600]}\n"
         f"{execution_model_content[:600]}\n"
         + "\n".join(mod_lines)
     )
@@ -1010,18 +1104,20 @@ Layered, Pipeline, Clean Architecture), component roles, and interactions.
 {reduced_modules_overview}
 
 Requirements:
-1. Section "## 1. Architecture Pattern & System Overview" at the top
+0. Start with the title line "{labels["design_overview_title"]}"
+   (use this heading exactly as written, do not translate or alter it).
+1. Section "{labels["design_overview_sec1"]}" at the top
    (Concise summary of architecture pattern and core layers/components).
+   Use this heading exactly as written, do not translate or alter it.
 2. Include a clean Mermaid Diagram (```mermaid ... ```) depicting the
    actual component architecture and data/control flow.
 3. Link index to details (data_models.md, execution_model.md, modules/).
 """
 
     default_overview = (
-        "# System Architecture Overview\n\n"
-        "## 1. Architecture Pattern & System Overview\n"
-        "Provides overall system architectural design and component "
-        "structure.\n"
+        f"{labels['design_overview_title']}\n\n"
+        f"{labels['design_overview_sec1']}\n"
+        f"{labels['design_overview_default']}\n"
     )
     sys_msg = (
         f"You are an objective software architect. "
@@ -1167,17 +1263,24 @@ def run_design_generation(
     )
     all_md_files = sorted(list(set(all_md_files)))
 
-    parsed_docs = [parse_symbol_doc(f) for f in all_md_files if f.is_file()]
+    labels = get_or_init_document_labels(
+        target_dir, norm_lang, llm_client=llm_client
+    )
+    parsed_docs = [
+        parse_symbol_doc(f, labels=labels)
+        for f in all_md_files if f.is_file()
+    ]
     print(f"[1/5] Loaded parsed documents: {len(parsed_docs)} items")
 
     # Bottom-up UI inference & symbol doc annotation
     ui_info = detect_ui_type(parsed_docs)
     annotated = annotate_documents_with_ui_context(
-        docs_dir, ui_info, language=norm_lang, force=force
+        docs_dir, ui_info, language=norm_lang, force=force, labels=labels
     )
     if annotated > 0:
         parsed_docs = [
-            parse_symbol_doc(f) for f in all_md_files if f.is_file()
+            parse_symbol_doc(f, labels=labels)
+            for f in all_md_files if f.is_file()
         ]
         print(
             f"       -> [UI Context Bottom-Up Annotated]: "
@@ -1278,6 +1381,7 @@ def run_design_generation(
             force=force,
             allow_fallback=allow_fallback,
             tracker=tracker,
+            labels=labels,
         )
 
         InterruptionState.check_interrupted()
@@ -1292,6 +1396,7 @@ def run_design_generation(
             allow_fallback=allow_fallback,
             ui_info=ui_info,
             tracker=tracker,
+            labels=labels,
         )
 
         InterruptionState.check_interrupted()
@@ -1305,6 +1410,7 @@ def run_design_generation(
             force=force,
             allow_fallback=allow_fallback,
             tracker=tracker,
+            labels=labels,
         )
 
         InterruptionState.check_interrupted()
@@ -1321,6 +1427,7 @@ def run_design_generation(
             allow_fallback=allow_fallback,
             ui_info=ui_info,
             tracker=tracker,
+            labels=labels,
         )
 
         tracker.finish()

@@ -246,15 +246,18 @@ class TestConfig(unittest.TestCase):
         from pystdoc.doc_labels import get_or_init_document_labels
         from unittest.mock import MagicMock
 
+        def fake_chat(messages, **kwargs):
+            body = messages[-1]["content"]
+            chunk = json.loads(body.split("```json\n")[1].split("\n```")[0])
+            out = {k: "[de] " + v for k, v in chunk.items()}
+            if "basic_info_title" in out:
+                out["basic_info_title"] = "## 1. Grundlegende Informationen"
+            if "label_symbol_kind" in out:
+                out["label_symbol_kind"] = "Symbolart"
+            return json.dumps(out)
+
         mock_llm = MagicMock()
-        mock_llm.chat_completion.return_value = json.dumps({
-            "language": "German",
-            "basic_info_title": "## 1. Grundlegende Informationen",
-            "label_name": "Name",
-            "label_symbol_kind": "Symbolart",
-            "label_location": "Speicherort",
-            "source_code_snippet_title": "## Quellcode-Ausschnitt",
-        })
+        mock_llm.chat_completion.side_effect = fake_chat
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -267,6 +270,10 @@ class TestConfig(unittest.TestCase):
                 "## 1. Grundlegende Informationen",
             )
             self.assertEqual(de_labels["label_symbol_kind"], "Symbolart")
+            # Localized design/README headings are also translated
+            self.assertTrue(
+                de_labels["design_overview_title"].startswith("[de]")
+            )
             labels_file = tmp_path / ".pystdoc" / "document_labels.json"
             self.assertTrue(labels_file.exists())
             self.assertIn(
@@ -283,6 +290,48 @@ class TestConfig(unittest.TestCase):
                 de_labels_cached["basic_info_title"],
                 "## 1. Grundlegende Informationen",
             )
+
+    def test_doc_labels_failed_translation_is_retried(self):
+        from pystdoc.doc_labels import (
+            get_or_init_document_labels,
+            DEFAULT_ENGLISH_LABELS,
+        )
+        from unittest.mock import MagicMock
+
+        bad_llm = MagicMock()
+        bad_llm.chat_completion.return_value = "not json at all"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            labels = get_or_init_document_labels(
+                tmp_path, "Japanese", llm_client=bad_llm
+            )
+            self.assertEqual(
+                labels["input_return_title"],
+                DEFAULT_ENGLISH_LABELS["input_return_title"],
+            )
+            labels_file = tmp_path / ".pystdoc" / "document_labels.json"
+            saved = json.loads(labels_file.read_text(encoding="utf-8"))
+            self.assertTrue(saved.get("_translation_incomplete"))
+
+            # A working LLM on the next run fills the English leftovers
+            good_llm = MagicMock()
+
+            def fake_chat(messages, **kwargs):
+                body = messages[-1]["content"]
+                chunk = json.loads(
+                    body.split("```json\n")[1].split("\n```")[0]
+                )
+                return json.dumps({k: "JA " + v for k, v in chunk.items()})
+
+            good_llm.chat_completion.side_effect = fake_chat
+            labels2 = get_or_init_document_labels(
+                tmp_path, "Japanese", llm_client=good_llm
+            )
+            self.assertTrue(labels2["input_return_title"].startswith("JA "))
+            self.assertNotIn("_translation_incomplete", labels2)
+            saved2 = json.loads(labels_file.read_text(encoding="utf-8"))
+            self.assertNotIn("_translation_incomplete", saved2)
 
 
 if __name__ == "__main__":

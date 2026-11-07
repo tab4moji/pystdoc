@@ -12,6 +12,7 @@ from pystdoc.cache import write_flushed_text
 from pystdoc.db import DocgenDB
 from pystdoc.doc_writer import normalize_language
 from pystdoc.llm_client import LLMClient, LLMError
+from pystdoc.doc_labels import get_or_init_document_labels
 from pystdoc.perf import PerfProfileManager
 from pystdoc.progress import PhaseProgressTracker, is_terminal
 from pystdoc.interrupt import InterruptionState
@@ -28,6 +29,9 @@ def generate_readme_doc(
 ) -> str:
     """Generate human-centric executive summary document: README.md."""
     norm_lang = normalize_language(language)
+    labels = get_or_init_document_labels(
+        target_dir, norm_lang, llm_client=llm_client
+    )
     if is_tty is None:
         is_tty = is_terminal(sys.stdout)
 
@@ -96,7 +100,9 @@ def generate_readme_doc(
     for mf in module_files:
         mod_name = mf.stem
         module_links.append(
-            f"  - [{mod_name} Module](design/modules/{mf.name})"
+            "  - [" + labels["readme_module_link_template"].replace(
+                "{name}", mod_name
+            ) + f"](design/modules/{mf.name})"
         )
         m_content = mf.read_text(encoding="utf-8", errors="replace")
         first_lines = " / ".join(
@@ -121,7 +127,10 @@ def generate_readme_doc(
         for sf in sorted(list(docs_dir.glob("*.md")))[:15]:
             s_text = sf.read_text(encoding="utf-8", errors="replace")
             m_ui_role = re.search(
-                r"- \*\*Interaction Specification\*\*:\s*([^\n]+)", s_text
+                r"- \*\*(?:Interaction Specification|"
+                + re.escape(labels["label_ui_interaction"])
+                + r")\*\*:\s*([^\n]+)",
+                s_text,
             )
             if m_ui_role:
                 symbol_ui_snippets.append(
@@ -135,7 +144,7 @@ def generate_readme_doc(
 
     # Compute cache key and input hash
     combined_input = (
-        f"{norm_lang}\n{overview_text[:800]}\n"
+        f"{norm_lang}\n{labels['readme_title']}\n{overview_text[:800]}\n"
         f"{data_models_text[:500]}\n{exec_model_text[:500]}\n"
         f"{modules_snippet_str}\n{ui_snippets_str}"
     )
@@ -218,40 +227,44 @@ Answer these 3 factual questions definitively in {norm_lang}
         f"Output Language: {norm_lang} (Write all text in {norm_lang}).\n"
         "Tone rule: Strictly objective, concise, and definitive (言い切り型: "
         "〜である / 〜を提供する. Absolutely no vague expressions or praise).\n\n"
-        "Structure the Markdown exactly as follows:\n"
-        "# Project Overview & Executive Summary\n\n"
-        "## 1. Software Classification & Purpose\n"
-        "- **Type**: (State definitively whether this is an Application "
+        "Structure the Markdown exactly as follows "
+        "(use these headings and labels exactly as written, "
+        "do not translate or alter them):\n"
+        f"{labels['readme_title']}\n\n"
+        f"{labels['readme_sec1']}\n"
+        f"- **{labels['readme_label_type']}**: "
+        "(State definitively whether this is an Application "
         "[GUI / TUI / CLI] or a Library in 1 assertive sentence)\n"
-        "- **Purpose**: (Factual summary: what this software does with "
+        f"- **{labels['readme_label_purpose']}**: "
+        "(Factual summary: what this software does with "
         "inputs and outputs, written in definitive tone)\n\n"
-        "## 2. Invocation & Usage Example\n"
+        f"{labels['readme_sec2']}\n"
         "(If CLI: Exact command-line invocation syntax with options/arguments "
         "and description. If Library/GUI: Concrete execution or API call "
         "example)\n\n"
-        "## 3. Core Features & Capabilities\n"
+        f"{labels['readme_sec3']}\n"
         "(Concise bullet points of implemented features and interfaces)\n\n"
-        "## 4. How It Works (High-Level Architecture Story)\n"
+        f"{labels['readme_sec4']}\n"
         "(Concise factual narrative of internal data flow between modules)\n\n"
-        "## 5. Documentation Navigation (Detailed Design Links)\n"
-        "- [**Architecture Overview (Overview)**](design/overview.md)\n"
-        "- [**Data Models & Structures (Data Models)**]"
+        f"{labels['readme_sec5']}\n"
+        f"- [**{labels['readme_nav_overview']}**](design/overview.md)\n"
+        f"- [**{labels['readme_nav_data_models']}**]"
         "(design/data_models.md)\n"
-        "- [**Execution Model & Runtime (Execution Model)**]"
+        f"- [**{labels['readme_nav_execution_model']}**]"
         "(design/execution_model.md)\n"
-        "- **Module Design Documents**:\n"
+        f"- **{labels['readme_nav_modules']}**:\n"
         f"{mod_links_str}\n"
-        "- [**Symbol & Source Code Index**](documents/)\n"
+        f"- [**{labels['readme_nav_symbol_index']}**](documents/)\n"
     )
 
-    inferred_type = "Software Module / Application"
+    inferred_type = labels["readme_type_default"]
     if (
         "cli" in proj_name.lower()
         or "CLI" in overview_text
         or "main(" in overview_text
         or "`CLI`" in ui_snippets_str
     ):
-        inferred_type = "CLI Application"
+        inferred_type = labels["readme_type_cli"]
     elif any(
         k in ui_snippets_str
         for k in (
@@ -259,9 +272,9 @@ Answer these 3 factual questions definitively in {norm_lang}
             "GtkWindow", "wxWidgets", "Jetpack Compose", "GUI"
         )
     ):
-        inferred_type = "GUI Application"
+        inferred_type = labels["readme_type_gui"]
     elif module_files:
-        inferred_type = "Library / Module Package"
+        inferred_type = labels["readme_type_library"]
 
     mod_names_str = (
         ", ".join(f"`{mf.stem}`" for mf in module_files[:6])
@@ -269,31 +282,37 @@ Answer these 3 factual questions definitively in {norm_lang}
         else "source modules"
     )
 
-    default_readme = f"""# Project Overview & Executive Summary ({proj_name})
+    default_purpose = labels["readme_default_purpose_template"].replace(
+        "{count}", str(len(module_files))
+    ).replace("{modules}", mod_names_str)
+    default_readme = (
+        labels["readme_title_with_project_template"].replace(
+            "{project}", proj_name
+        )
+        + f"""
 
-## 1. Software Classification & Purpose
-- **Type**: {inferred_type}
-- **Purpose**: Provides functionality implemented across {len(module_files)} \
-key module(s) ({mod_names_str}).
+{labels['readme_sec1']}
+- **{labels['readme_label_type']}**: {inferred_type}
+- **{labels['readme_label_purpose']}**: {default_purpose}
 
-## 2. Invocation & Usage Example
-Refer to the module interfaces and entry points described in documentation.
+{labels['readme_sec2']}
+{labels['readme_default_invocation']}
 
-## 3. Core Features & Capabilities
+{labels['readme_sec3']}
 {modules_snippet_str}
 
-## 4. How It Works (High-Level Architecture Story)
-Modular software system structured into interconnected components with \
-topological dependency mapping.
+{labels['readme_sec4']}
+{labels['readme_default_how_it_works']}
 
-## 5. Documentation Navigation (Detailed Design Links)
-- [**Architecture Overview (Overview)**](design/overview.md)
-- [**Data Models & Structures (Data Models)**](design/data_models.md)
-- [**Execution Model & Runtime (Execution Model)**](design/execution_model.md)
-- **Module Design Documents**:
+{labels['readme_sec5']}
+- [**{labels['readme_nav_overview']}**](design/overview.md)
+- [**{labels['readme_nav_data_models']}**](design/data_models.md)
+- [**{labels['readme_nav_execution_model']}**](design/execution_model.md)
+- **{labels['readme_nav_modules']}**:
 {mod_links_str}
-- [**Symbol & Source Code Index**](documents/)
+- [**{labels['readme_nav_symbol_index']}**](documents/)
 """
+    )
 
     try:
         InterruptionState.check_interrupted()
